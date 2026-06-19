@@ -54,6 +54,11 @@ shiplog brief --json           # same, machine-readable
 
 🚧 v0.1 in progress. See [`PLAN.md`](./PLAN.md) for scope, architecture, and milestones (M1–M6).
 
+- **M1** — package scaffold, `shiplog --version` / `shiplog hello`. ✅
+- **M2** — append-only JSONL store backbone (`shiplog/models.py` + `shiplog/store.py`): `Entry`
+  model, JSONL (de)serialization, sortable ids, file-locked concurrent append + read. ✅
+  *(internal API for now; the `init`/`add`/`ls` commands that use it land in M3–M4.)*
+
 ## For agents
 
 The whole point: an agent should run `shiplog brief` **before** editing and `shiplog add`
