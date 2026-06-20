@@ -35,16 +35,24 @@ shiplog --version              # -> shiplog 0.1.0
 shiplog hello                  # friendly banner; proof the install works
 ```
 
-## Quickstart (planned v0.1)
+## Quickstart
+
+`init` + `add` work today (M3). `ls`/`show`/`brief` land in M4–M5.
 
 ```bash
-pipx install ship-log          # not published yet — see PLAN.md milestones
-
-shiplog init                   # creates .shiplog/log.jsonl
+shiplog init                   # creates .shiplog/log.jsonl + .shiplog/config.toml (idempotent)
 shiplog add decision "Use JSONL not SQLite for the store" \
   --why "merge-friendly + greppable" --files shiplog/store.py --tags storage
 shiplog add deadend "Tried threading for append; lock contention" --files shiplog/store.py
+```
 
+Every `add` auto-stamps the entry with your git **author**, **branch**, **short sha**, and a
+UTC **timestamp** — you only type the `type` + one-line summary (plus optional
+`--why/--files/--tags/--ref`). Entries are plain JSONL in `.shiplog/log.jsonl`, so they're
+diffable and greppable without the tool.
+
+```bash
+# coming next (M4–M5):
 shiplog ls --type deadend      # skim what NOT to redo
 shiplog brief                  # token-efficient digest to paste into an agent's context
 shiplog brief --json           # same, machine-readable
@@ -57,7 +65,10 @@ shiplog brief --json           # same, machine-readable
 - **M1** — package scaffold, `shiplog --version` / `shiplog hello`. ✅
 - **M2** — append-only JSONL store backbone (`shiplog/models.py` + `shiplog/store.py`): `Entry`
   model, JSONL (de)serialization, sortable ids, file-locked concurrent append + read. ✅
-  *(internal API for now; the `init`/`add`/`ls` commands that use it land in M3–M4.)*
+- **M3** — `shiplog init` (creates `.shiplog/` + `config.toml`, idempotent) and `shiplog add`
+  (git-stamped append with validation + friendly errors), via `shiplog/gitctx.py` +
+  `shiplog/config.py`. ✅
+  *(`ls`/`show`/`brief` that read it back land in M4–M5.)*
 
 ## For agents
 
