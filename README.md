@@ -16,6 +16,25 @@ line and a "why." The next agent reads the log before touching code — and skip
 - `git blame` tells you *who* changed a line, never *what was tried and rejected*.
 - Agents have no shared, durable, per-repo memory. Now they do — and it's just a file.
 
+## Install (dev / M1)
+
+Not on PyPI yet. Run it from a clone:
+
+```bash
+git clone https://github.com/rwrife/ship-log
+cd ship-log
+
+# pipx (recommended): isolated, on your PATH
+pipx install --editable .
+
+# …or a plain venv
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+
+shiplog --version              # -> shiplog 0.1.0
+shiplog hello                  # friendly banner; proof the install works
+```
+
 ## Quickstart (planned v0.1)
 
 ```bash
