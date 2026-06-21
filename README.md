@@ -37,7 +37,7 @@ shiplog hello                  # friendly banner; proof the install works
 
 ## Quickstart
 
-`init` + `add` work today (M3). `ls`/`show`/`brief` land in M4–M5.
+`init`, `add`, `ls`, and `show` work today (through M4). `brief` lands in M5.
 
 ```bash
 shiplog init                   # creates .shiplog/log.jsonl + .shiplog/config.toml (idempotent)
@@ -51,9 +51,25 @@ UTC **timestamp** — you only type the `type` + one-line summary (plus optional
 `--why/--files/--tags/--ref`). Entries are plain JSONL in `.shiplog/log.jsonl`, so they're
 diffable and greppable without the tool.
 
+### Read it back (M4)
+
 ```bash
-# coming next (M4–M5):
+shiplog ls                     # skimmable Rich table, newest first
 shiplog ls --type deadend      # skim what NOT to redo
+shiplog ls --tag storage       # filter by tag
+shiplog ls --file store.py     # entries touching a path (suffix match)
+shiplog ls --since 7d          # last 7 days (also: 24h, 2w, or an ISO date)
+shiplog ls --json              # stable JSON array for agents/pipes
+
+shiplog show 260621-K3F9Q2     # full detail for one entry (id or unique prefix)
+shiplog show 260621-K3 --json  # same, machine-readable object
+```
+
+Filters are AND-combined and case-insensitive; `--json` on `ls`/`show` emits clean,
+ANSI-free output (array for `ls`, object for `show`) so agents parse instead of scrape.
+
+```bash
+# coming next (M5):
 shiplog brief                  # token-efficient digest to paste into an agent's context
 shiplog brief --json           # same, machine-readable
 ```
@@ -68,7 +84,10 @@ shiplog brief --json           # same, machine-readable
 - **M3** — `shiplog init` (creates `.shiplog/` + `config.toml`, idempotent) and `shiplog add`
   (git-stamped append with validation + friendly errors), via `shiplog/gitctx.py` +
   `shiplog/config.py`. ✅
-  *(`ls`/`show`/`brief` that read it back land in M4–M5.)*
+- **M4** — `shiplog ls` (Rich table, newest-first, `--type/--tag/--file/--since/--limit`) and
+  `shiplog show <id>` (full detail, id or unique prefix), both with `--json`, via
+  `shiplog/filters.py` + `shiplog/render.py`. ✅
+  *(the `brief` digest that ranks dead-ends + recent decisions lands in M5.)*
 
 ## For agents
 
