@@ -71,6 +71,44 @@ def short_sha(cwd: str | os.PathLike[str] | None = None) -> str:
     return _run_git("rev-parse", "--short", "HEAD", cwd=cwd) or ""
 
 
+def working_tree_files(cwd: str | os.PathLike[str] | None = None) -> list[str]:
+    """Return repo-relative paths present in the working tree (best effort).
+
+    Used by ``brief`` to prioritize log entries touching what you're working on.
+    Combines tracked files (``git ls-files``) with anything added/modified/untracked
+    per ``git status --porcelain`` so a brand-new file you're editing still counts.
+    Paths are repo-relative with forward slashes (git's native form), de-duplicated
+    and order-stable. Returns ``[]`` outside a repo or on any git failure.
+
+    Note: ``git status --porcelain`` may quote/rename paths (``R  old -> new``);
+    we keep this intentionally simple and skip rename arrows, which is fine since
+    the result only *ranks* entries — it never gates correctness.
+    """
+    seen: list[str] = []
+
+    def _add(path: str) -> None:
+        p = path.strip().strip('"')
+        if p and p not in seen:
+            seen.append(p)
+
+    tracked = _run_git("ls-files", cwd=cwd)
+    if tracked:
+        for line in tracked.splitlines():
+            _add(line)
+
+    status = _run_git("status", "--porcelain", cwd=cwd)
+    if status:
+        for line in status.splitlines():
+            # Format: "XY <path>" (cols 0-1 = status, path from col 3). Renames
+            # show "old -> new"; take the right-hand (current) side.
+            entry = line[3:] if len(line) > 3 else line
+            if " -> " in entry:
+                entry = entry.split(" -> ", 1)[1]
+            _add(entry)
+
+    return seen
+
+
 def git_author(cwd: str | os.PathLike[str] | None = None) -> str:
     """Return the configured author as ``"Name <email>"`` (best effort).
 

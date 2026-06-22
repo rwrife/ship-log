@@ -1,8 +1,9 @@
 """Typer CLI entrypoint for ship-log.
 
 M1 wired the skeleton (``--version`` + ``hello``). M3 made logging real (``init`` +
-``add``). M4 adds the read side: ``ls`` (filterable Rich table) and ``show <id>``
-(full detail), both with ``--json`` for agents. ``brief`` lands in M5.
+``add``). M4 added the read side: ``ls`` (filterable Rich table) and ``show <id>``
+(full detail), both with ``--json``. M5 adds ``brief`` -- the token-efficient digest
+an agent pastes into context before working.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import typer
 from rich.console import Console
 
 from . import __version__
+from .brief import DEFAULT_BUDGET, brief_to_dict, build_brief
 from .config import (
     CONFIG_FILENAME,
     Config,
@@ -21,9 +23,9 @@ from .config import (
     default_config_text,
 )
 from .filters import filter_entries, parse_since, sort_newest_first
-from .gitctx import GitContext
+from .gitctx import GitContext, working_tree_files
 from .models import Entry, EntryType
-from .render import empty_note, entries_table, entry_panel
+from .render import brief_markdown, empty_note, entries_table, entry_panel
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
 
 app = typer.Typer(
@@ -390,6 +392,60 @@ def show(
         return
 
     console.print(entry_panel(entry))
+
+
+@app.command()
+def brief(
+    files: str = typer.Option(
+        "",
+        "--files",
+        help="Comma-separated paths to focus on (default: the working tree).",
+    ),
+    limit: int = typer.Option(
+        DEFAULT_BUDGET,
+        "--limit",
+        "-n",
+        help=f"Max entries in the digest (default {DEFAULT_BUDGET}; 0 = no cap).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the digest as a JSON object instead of markdown.",
+    ),
+) -> None:
+    """Print a token-efficient digest to drop into an agent's context.
+
+    Leads with dead-ends (what NOT to redo), then decisions, prioritizing entries
+    that touch files in your working tree -- or an explicit ``--files`` set. Kept
+    short by ``--limit`` so it pastes straight into a prompt; ``--json`` emits a
+    stable object (``entries`` ranked, plus ``focus``/``total``/``deadends``).
+    """
+    repo_root = _resolve_repo_root()
+    store = Store.for_repo(repo_root)
+    if not store.exists():
+        _fail('no ship-log here yet. Run [bold]shiplog init[/bold] first.')
+
+    # Explicit --files wins; otherwise focus on whatever's in the working tree so
+    # the digest is automatically scoped to what the agent is about to touch. The
+    # log's own .shiplog/ dir is filtered out -- it's storage, not a focus file.
+    if files.strip():
+        focus = _split_csv(files)
+    else:
+        focus = [
+            f
+            for f in working_tree_files(repo_root)
+            if not f.rstrip("/").startswith(SHIPLOG_DIR)
+        ]
+
+    digest = build_brief(store.read_all(), focus=focus, budget=limit)
+
+    if as_json:
+        console.print_json(json.dumps(brief_to_dict(digest), ensure_ascii=False))
+        return
+
+    # Print the markdown verbatim (no Rich markup interpretation) so it's exactly
+    # what lands in a prompt -- and clean when piped/redirected.
+    print(brief_markdown(digest))
 
 
 if __name__ == "__main__":  # pragma: no cover
