@@ -1,12 +1,13 @@
 """Typer CLI entrypoint for ship-log.
 
-M1 wired the skeleton (``--version`` + ``hello``). M3 makes logging real: ``init``
-creates ``.shiplog/`` and ``add`` appends a git-stamped entry. ``ls``/``show``/``brief``
-land in later milestones.
+M1 wired the skeleton (``--version`` + ``hello``). M3 made logging real (``init`` +
+``add``). M4 adds the read side: ``ls`` (filterable Rich table) and ``show <id>``
+(full detail), both with ``--json`` for agents. ``brief`` lands in M5.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -19,8 +20,10 @@ from .config import (
     config_path_for_repo,
     default_config_text,
 )
+from .filters import filter_entries, parse_since, sort_newest_first
 from .gitctx import GitContext
 from .models import Entry, EntryType
+from .render import empty_note, entries_table, entry_panel
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
 
 app = typer.Typer(
@@ -62,6 +65,39 @@ def _split_csv(value: str | None) -> list[str]:
         if item and item not in seen:
             seen.append(item)
     return seen
+
+
+def _open_store_for_read() -> Store:
+    """Resolve the repo's store for a read command, or exit with a friendly hint.
+
+    Centralizes the "are we in a repo / has it been init'd" checks shared by
+    ``ls`` and ``show`` so both fail identically and clearly.
+    """
+    repo_root = _resolve_repo_root()
+    store = Store.for_repo(repo_root)
+    if not store.exists():
+        _fail('no ship-log here yet. Run [bold]shiplog init[/bold] first.')
+    return store
+
+
+def _find_by_id(entries: list[Entry], wanted: str) -> Entry | None:
+    """Resolve an id to an entry: exact match first, then a unique prefix.
+
+    Ids are case-insensitive here for ergonomics. An exact (case-insensitive)
+    match always wins. Otherwise a single prefix hit resolves; multiple prefix
+    hits raise :class:`LookupError` (ambiguous), and zero hits return ``None``.
+    """
+    q = wanted.strip().lower()
+    for e in entries:
+        if e.id.lower() == q:
+            return e
+    prefix_hits = [e for e in entries if e.id.lower().startswith(q)]
+    if len(prefix_hits) == 1:
+        return prefix_hits[0]
+    if len(prefix_hits) > 1:
+        ids = ", ".join(e.id for e in prefix_hits[:6])
+        raise LookupError(f"id {wanted!r} is ambiguous; matches: {ids}")
+    return None
 
 _BANNER = r"""
       ___
@@ -243,6 +279,117 @@ def add(
     if entry.sha:
         meta += f" @ {entry.sha}"
     console.print(f"  {meta}", style="dim")
+
+
+@app.command(name="ls")
+def ls(
+    type_: str = typer.Option(
+        "",
+        "--type",
+        "-t",
+        help="Only entries of this type (decision, attempt, deadend, note).",
+    ),
+    tag: str = typer.Option(
+        "",
+        "--tag",
+        help="Only entries carrying this tag.",
+    ),
+    file: str = typer.Option(
+        "",
+        "--file",
+        help="Only entries referencing this path (suffix match, e.g. cli.py).",
+    ),
+    since: str = typer.Option(
+        "",
+        "--since",
+        help="Only entries at/after a time: relative (7d, 24h) or ISO date.",
+    ),
+    limit: int = typer.Option(
+        0,
+        "--limit",
+        "-n",
+        help="Show at most N entries (0 = no limit).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a JSON array instead of a table (for agents/pipes).",
+    ),
+) -> None:
+    """List log entries newest-first, with optional filters.
+
+    Filters are AND-combined. ``--type`` is validated up front; ``--since`` accepts
+    a relative span (``7d``, ``24h``, ``2w``) or an ISO date/datetime. Use
+    ``--json`` for a stable, parseable array (always emitted, even when empty).
+    """
+    if type_.strip():
+        try:
+            type_ = EntryType.coerce(type_).value
+        except ValueError as exc:
+            _fail(str(exc))
+
+    since_dt = None
+    if since.strip():
+        try:
+            since_dt = parse_since(since)
+        except ValueError as exc:
+            _fail(str(exc))
+
+    store = _open_store_for_read()
+    entries = filter_entries(
+        store.read_all(),
+        type_=type_,
+        tag=tag,
+        file=file,
+        since=since_dt,
+    )
+    entries = sort_newest_first(entries)
+    if limit and limit > 0:
+        entries = entries[:limit]
+
+    if as_json:
+        payload = [e.to_dict() for e in entries]
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    if not entries:
+        console.print(empty_note("no entries match. Try fewer filters, or shiplog add."))
+        return
+
+    count = len(entries)
+    title = f"⚓ ship-log — {count} entr{'y' if count == 1 else 'ies'}"
+    console.print(entries_table(entries, title=title))
+
+
+@app.command()
+def show(
+    entry_id: str = typer.Argument(
+        ...,
+        metavar="ID",
+        help="Entry id (full, or a unique prefix).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the entry as a JSON object instead of a panel.",
+    ),
+) -> None:
+    """Show full detail for a single entry by id (or unique id prefix)."""
+    store = _open_store_for_read()
+    entries = store.read_all()
+    try:
+        entry = _find_by_id(entries, entry_id)
+    except LookupError as exc:
+        _fail(str(exc))
+
+    if entry is None:
+        _fail(f"no entry with id {entry_id!r}. Try [bold]shiplog ls[/bold] to find one.")
+
+    if as_json:
+        console.print_json(json.dumps(entry.to_dict(), ensure_ascii=False))
+        return
+
+    console.print(entry_panel(entry))
 
 
 if __name__ == "__main__":  # pragma: no cover
