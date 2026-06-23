@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .brief import Brief
 from .models import Entry, EntryType
 
 # One accent color per type — dead-ends shout, notes whisper.
@@ -116,3 +117,99 @@ def entry_panel(entry: Entry) -> Panel:
 def empty_note(message: str) -> Text:
     """A dim one-liner shown when a read matches nothing."""
     return Text(message, style="dim italic")
+
+
+# -- brief (markdown digest) ---------------------------------------------
+
+# Section headers in digest order. Anything not deadend/decision falls into a
+# trailing "Recent" bucket so attempts/notes still surface, just lower.
+_BRIEF_SECTIONS: list[tuple[str, str]] = [
+    (EntryType.DEADEND.value, "Dead-ends (do NOT redo)"),
+    (EntryType.DECISION.value, "Decisions"),
+]
+_BRIEF_OTHER_HEADING = "Recent (attempts / notes)"
+
+# Keep each bullet's free-text short so the whole digest stays paste-able.
+_WHY_MAX = 100
+
+
+def _trim(text: str, limit: int) -> str:
+    """Collapse whitespace and clip ``text`` to ``limit`` chars with an ellipsis."""
+    flat = " ".join((text or "").split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1].rstrip() + "\u2026"
+
+
+def _brief_bullet(entry: Entry) -> str:
+    """Render one entry as a single compact markdown bullet line.
+
+    Shape: ``- `id` summary -- why _(files)_``. The id is code-spanned so it's
+    copy-pasteable into ``shiplog show``; ``why`` and ``files`` are included only
+    when present and trimmed to keep the line short.
+    """
+    parts = [f"- `{entry.id}` {_trim(entry.summary, 120)}"]
+    if entry.why:
+        parts.append(f" \u2014 {_trim(entry.why, _WHY_MAX)}")
+    if entry.files:
+        parts.append(f" _({_trim(', '.join(entry.files), 80)})_")
+    return "".join(parts)
+
+
+def brief_markdown(brief: Brief) -> str:
+    """Render a :class:`~shiplog.brief.Brief` to a compact markdown digest.
+
+    Leads with a one-line header (focus + dead-end count), then a **Dead-ends**
+    section, then **Decisions**, then a trailing **Recent** bucket for
+    attempts/notes -- each entry a single bullet. A final ``+N more`` line is
+    added when the budget truncated the log. Designed to drop straight into an
+    agent's context; the default budget keeps it near ~40 lines.
+    """
+    lines: list[str] = ["# ship-log brief"]
+
+    # Header: what's in focus + the headline dead-end count.
+    if brief.focus:
+        shown = ", ".join(brief.focus[:4])
+        if len(brief.focus) > 4:
+            shown += f", +{len(brief.focus) - 4} more"
+        focus_note = f"focus: {shown}"
+    else:
+        focus_note = "focus: whole repo"
+    lines.append(
+        f"_{focus_note} \u00b7 {brief.deadend_count} dead-end"
+        f"{'' if brief.deadend_count == 1 else 's'} "
+        f"\u00b7 {len(brief.entries)} of {brief.total} entries_"
+    )
+
+    if not brief.entries:
+        lines.append("")
+        lines.append("_(log is empty -- nothing tried here yet.)_")
+        return "\n".join(lines)
+
+    # Partition once, preserving the ranked order within each bucket.
+    by_type: dict[str, list[Entry]] = {}
+    for e in brief.entries:
+        by_type.setdefault(e.type.value, []).append(e)
+
+    rendered_types: set[str] = set()
+    for type_value, heading in _BRIEF_SECTIONS:
+        bucket = by_type.get(type_value, [])
+        if not bucket:
+            continue
+        rendered_types.add(type_value)
+        lines.append("")
+        lines.append(f"## {heading}")
+        lines.extend(_brief_bullet(e) for e in bucket)
+
+    # Everything else (attempts/notes/unknown), in ranked order.
+    others = [e for e in brief.entries if e.type.value not in rendered_types]
+    if others:
+        lines.append("")
+        lines.append(f"## {_BRIEF_OTHER_HEADING}")
+        lines.extend(_brief_bullet(e) for e in others)
+
+    if brief.truncated:
+        lines.append("")
+        lines.append(f"_+{brief.truncated} more in `shiplog ls`._")
+
+    return "\n".join(lines)

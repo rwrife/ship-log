@@ -37,7 +37,7 @@ shiplog hello                  # friendly banner; proof the install works
 
 ## Quickstart
 
-`init`, `add`, `ls`, and `show` work today (through M4). `brief` lands in M5.
+`init`, `add`, `ls`, `show`, and `brief` all work today (through M5).
 
 ```bash
 shiplog init                   # creates .shiplog/log.jsonl + .shiplog/config.toml (idempotent)
@@ -68,11 +68,35 @@ shiplog show 260621-K3 --json  # same, machine-readable object
 Filters are AND-combined and case-insensitive; `--json` on `ls`/`show` emits clean,
 ANSI-free output (array for `ls`, object for `show`) so agents parse instead of scrape.
 
+### Brief it (M5) — the headline feature
+
+`shiplog brief` prints a compact, token-efficient digest to drop straight into an
+agent's context **before** it edits — leading with dead-ends (what NOT to redo),
+then decisions, prioritizing entries that touch files in your **working tree**.
+
 ```bash
-# coming next (M5):
-shiplog brief                  # token-efficient digest to paste into an agent's context
-shiplog brief --json           # same, machine-readable
+shiplog brief                  # markdown digest, dead-ends first, scoped to the working tree
+shiplog brief --files cli.py   # focus on specific paths instead of the working tree
+shiplog brief --limit 20       # tune the size budget (default 12; 0 = no cap)
+shiplog brief --json           # machine-readable: {entries[], focus, total, deadends, ...}
 ```
+
+Example output:
+
+```markdown
+# ship-log brief
+_focus: shiplog/store.py · 2 dead-ends · 5 of 5 entries_
+
+## Dead-ends (do NOT redo)
+- `260622-534CC7` Tried threading for append; lock contention — GIL + fsync made it slower _(shiplog/store.py)_
+
+## Decisions
+- `260622-4RXE2Y` Use JSONL not SQLite — merge-friendly + greppable _(shiplog/store.py)_
+```
+
+The digest is ranked *before* the size budget is applied, so truncation always drops
+the least-relevant tail — never a dead-end in favor of an old note. Output is plain
+markdown (verbatim, no ANSI) so it's clean when piped into a prompt.
 
 ## Status
 
@@ -87,7 +111,10 @@ shiplog brief --json           # same, machine-readable
 - **M4** — `shiplog ls` (Rich table, newest-first, `--type/--tag/--file/--since/--limit`) and
   `shiplog show <id>` (full detail, id or unique prefix), both with `--json`, via
   `shiplog/filters.py` + `shiplog/render.py`. ✅
-  *(the `brief` digest that ranks dead-ends + recent decisions lands in M5.)*
+- **M5** — `shiplog brief` (token-efficient markdown digest: dead-ends first, then decisions,
+  prioritizing working-tree / `--files`; `--limit` size budget; `--json` variant), via
+  `shiplog/brief.py`. ✅
+  *(agent ergonomics — a drop-in `AGENT.md` snippet + publish — land in M6.)*
 
 ## For agents
 
