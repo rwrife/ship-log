@@ -96,6 +96,32 @@ The digest is ranked *before* the size budget is applied, so truncation always d
 the least-relevant tail — never a dead-end in favor of an old note. Output is plain
 markdown (verbatim, no ANSI) so it's clean when piped into a prompt.
 
+### Blame a line — the "why" `git blame` lacks
+
+`shiplog blame <file>:<line>` surfaces the nearest logged decision/dead-end anchored to
+a line. `git blame` tells you *who* last touched a line; `shiplog blame` tells you *what
+was decided or ruled out there, and why*.
+
+```bash
+shiplog blame shiplog/store.py:50   # nearest rationale for line 50, + alternates
+shiplog blame store.py:50           # basename works too (path-suffix match)
+shiplog blame shiplog/store.py      # no line → all entries touching the file, recent first
+shiplog blame shiplog/store.py:50 --json   # stable object: {target, best, alternates, count}
+```
+
+Anchor an entry to a line range when you log it, so `blame` can pinpoint it:
+
+```bash
+shiplog add deadend "threading the append loop thrashes the lock" \
+  --files shiplog/store.py:40-80 --why "GIL + fsync made it slower"
+```
+
+A file reference is `path`, `path:line`, or `path:start-end`. Ranking is
+**containment → proximity → tighter range → recency**: an entry whose range *covers*
+the line wins, then nearer ranges, then whole-file references, with newest breaking ties.
+Plain (range-less) entries still match — they just rank below a line-pinned one. If nothing
+touches the file you get a friendly hint, not an error.
+
 ## For agents
 
 The whole point: an agent runs `shiplog brief` **before** editing and `shiplog add`
@@ -130,6 +156,12 @@ an asciinema cast.
 - **M6** — polish + agent ergonomics: copy-paste [`AGENT.md`](./AGENT.md) protocol (brief-in /
   add-out), README quickstart, runnable [`demo/`](./demo) walkthrough, and OIDC trusted-publishing
   release workflow (`.github/workflows/release.yml`) for TestPyPI → PyPI. 🚧
+
+### Backlog (v0.2+)
+
+- **`shiplog blame <file>:<line>`** — nearest logged decision/dead-end for a line
+  (containment → proximity → recency), with `--json`. ✅ Anchor entries via
+  `--files path:start-end`.
 
 ## License
 

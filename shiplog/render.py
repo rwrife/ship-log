@@ -11,10 +11,12 @@ A small color map gives each entry type a glanceable hue (dead-ends in red, sinc
 
 from __future__ import annotations
 
+from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .blame import BlameHit, BlameResult
 from .brief import Brief
 from .models import Entry, EntryType
 
@@ -117,6 +119,74 @@ def entry_panel(entry: Entry) -> Panel:
 def empty_note(message: str) -> Text:
     """A dim one-liner shown when a read matches nothing."""
     return Text(message, style="dim italic")
+
+
+# -- blame (line-anchored lookup) ----------------------------------------
+
+
+def _anchor_label(hit: BlameHit) -> str:
+    """Human label for what a hit matched: ``store.py:40-80`` or ``store.py (file)``."""
+    if hit.line_range is None:
+        return f"{hit.matched_path} (whole file)"
+    return hit.matched_path
+
+
+def _relevance_text(hit: BlameHit, target_line: int | None) -> Text:
+    """A short colorized note on why a hit ranked: contains / N lines away / file."""
+    if target_line is None or hit.line_range is None:
+        return Text("file match", style="dim")
+    if hit.contains:
+        return Text(f"covers line {target_line}", style="green")
+    return Text(f"{hit.distance} line{'' if hit.distance == 1 else 's'} away", style="yellow")
+
+
+def _blame_hit_panel(hit: BlameHit, target_line: int | None, *, headline: bool) -> Panel:
+    """Render one blame hit as a panel (the headline gets a brighter border)."""
+    e = hit.entry
+    body = Table.grid(padding=(0, 1))
+    body.add_column(justify="right", style="bold")
+    body.add_column(overflow="fold")
+
+    body.add_row("type:", type_text(e.type.value))
+    body.add_row("summary:", Text(e.summary))
+    if e.why:
+        body.add_row("why:", Text(e.why))
+    body.add_row("anchor:", Text(_anchor_label(hit)))
+    body.add_row("match:", _relevance_text(hit, target_line))
+    meta = e.branch or "(no branch)"
+    if e.sha:
+        meta += f" @ {e.sha}"
+    body.add_row("when:", Text(f"{_short_ts(e.ts)}  {meta}", style="dim"))
+
+    title = ("⚓ nearest rationale" if headline else "alternate") + f" · {e.id}"
+    return Panel(
+        body,
+        title=title,
+        title_align="left",
+        border_style=_TYPE_STYLE.get(e.type.value, "white") if headline else "dim",
+        expand=False,
+    )
+
+
+def blame_render(result: BlameResult) -> Group:
+    """Render a :class:`~shiplog.blame.BlameResult`: headline hit + alternates.
+
+    The caller has already handled the empty case (no hits) with a friendly note;
+    this assumes at least one hit and leads with the strongest match.
+    """
+    line = result.target.line
+    where = result.target.path + (f":{line}" if line is not None else "")
+    renderables: list[object] = [
+        Text(f"blame {where}", style="bold"),
+        _blame_hit_panel(result.best, line, headline=True),
+    ]
+    alts = result.alternates
+    if alts:
+        renderables.append(
+            Text(f"{len(alts)} more match{'' if len(alts) == 1 else 'es'}:", style="dim")
+        )
+        renderables.extend(_blame_hit_panel(h, line, headline=False) for h in alts)
+    return Group(*renderables)
 
 
 # -- brief (markdown digest) ---------------------------------------------

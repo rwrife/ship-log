@@ -15,6 +15,8 @@ import typer
 from rich.console import Console
 
 from . import __version__
+from .blame import blame as run_blame
+from .blame import blame_to_dict, parse_target
 from .brief import DEFAULT_BUDGET, brief_to_dict, build_brief
 from .config import (
     CONFIG_FILENAME,
@@ -25,7 +27,13 @@ from .config import (
 from .filters import filter_entries, parse_since, sort_newest_first
 from .gitctx import GitContext, working_tree_files
 from .models import Entry, EntryType
-from .render import brief_markdown, empty_note, entries_table, entry_panel
+from .render import (
+    blame_render,
+    brief_markdown,
+    empty_note,
+    entries_table,
+    entry_panel,
+)
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
 
 app = typer.Typer(
@@ -215,7 +223,7 @@ def add(
     files: str = typer.Option(
         "",
         "--files",
-        help="Comma-separated paths this entry is about.",
+        help="Comma-separated paths this entry is about (a path may pin a line: file.py:40-80).",
     ),
     tags: str = typer.Option(
         "",
@@ -446,6 +454,60 @@ def brief(
     # Print the markdown verbatim (no Rich markup interpretation) so it's exactly
     # what lands in a prompt -- and clean when piped/redirected.
     print(brief_markdown(digest))
+
+
+@app.command()
+def blame(
+    target: str = typer.Argument(
+        ...,
+        metavar="FILE[:LINE]",
+        help="File (optionally :line or :start-end) to explain, e.g. shiplog/store.py:42.",
+    ),
+    limit: int = typer.Option(
+        5,
+        "--limit",
+        "-n",
+        help="Max matches to show (headline + alternates; 0 = no cap).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a JSON object instead of panels (for agents/pipes).",
+    ),
+) -> None:
+    """Show the nearest logged decision/dead-end for a file line -- the "why" git blame lacks.
+
+    Finds entries whose ``--files`` cover ``FILE`` and ranks them so the most
+    line-relevant, most recent rationale leads, with the rest as alternates. Entries
+    can pin a range by logging ``--files path:start-end``; a plain ``path`` covers
+    the whole file. ``--json`` emits a stable object (``best`` + ``alternates``).
+    """
+    try:
+        parsed = parse_target(target)
+    except ValueError as exc:
+        _fail(str(exc))
+
+    store = _open_store_for_read()
+    result = run_blame(store.read_all(), parsed, limit=limit)
+
+    if as_json:
+        console.print_json(json.dumps(blame_to_dict(result), ensure_ascii=False))
+        return
+
+    if result.best is None:
+        where = parsed.path + (f":{parsed.line}" if parsed.line is not None else "")
+        console.print(
+            empty_note(
+                f"no log entries touch {where}. "
+                "Log one: shiplog add decision \"...\" --files "
+                f"{parsed.path}"
+                + (f":{parsed.line}" if parsed.line is not None else "")
+                + "."
+            )
+        )
+        return
+
+    console.print(blame_render(result))
 
 
 if __name__ == "__main__":  # pragma: no cover
