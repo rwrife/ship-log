@@ -16,22 +16,20 @@ line and a "why." The next agent reads the log before touching code — and skip
 - `git blame` tells you *who* changed a line, never *what was tried and rejected*.
 - Agents have no shared, durable, per-repo memory. Now they do — and it's just a file.
 
-## Install (dev / M1)
+## Install
 
-Not on PyPI yet. Run it from a clone:
+```bash
+pipx install ship-log          # isolated, on your PATH (recommended)
+shiplog --version              # -> shiplog 0.1.0
+```
+
+> Publishing to PyPI is wired up via OIDC trusted publishing (see
+> `.github/workflows/release.yml`); until the first tag lands, install from a clone:
 
 ```bash
 git clone https://github.com/rwrife/ship-log
 cd ship-log
-
-# pipx (recommended): isolated, on your PATH
-pipx install --editable .
-
-# …or a plain venv
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-
-shiplog --version              # -> shiplog 0.1.0
+pipx install --editable .      # or, for development: uv pip install -e ".[dev]"
 shiplog hello                  # friendly banner; proof the install works
 ```
 
@@ -98,6 +96,21 @@ The digest is ranked *before* the size budget is applied, so truncation always d
 the least-relevant tail — never a dead-end in favor of an old note. Output is plain
 markdown (verbatim, no ANSI) so it's clean when piped into a prompt.
 
+## For agents
+
+The whole point: an agent runs `shiplog brief` **before** editing and `shiplog add`
+**after** making a decision. Drop [`AGENT.md`](./AGENT.md) (or paste its protocol block)
+into your agent's instructions — it's copy-paste ready.
+
+```bash
+shiplog brief                  # read this BEFORE you edit — skip known dead-ends
+# …make a call…
+shiplog add deadend "Tried X; it broke Y" --why "..." --files path  # log it AFTER
+```
+
+See [`demo/`](./demo) for a runnable walkthrough (`./demo/demo.sh`) you can also record to
+an asciinema cast.
+
 ## Status
 
 🚧 v0.1 in progress. See [`PLAN.md`](./PLAN.md) for scope, architecture, and milestones (M1–M6).
@@ -114,12 +127,9 @@ markdown (verbatim, no ANSI) so it's clean when piped into a prompt.
 - **M5** — `shiplog brief` (token-efficient markdown digest: dead-ends first, then decisions,
   prioritizing working-tree / `--files`; `--limit` size budget; `--json` variant), via
   `shiplog/brief.py`. ✅
-  *(agent ergonomics — a drop-in `AGENT.md` snippet + publish — land in M6.)*
-
-## For agents
-
-The whole point: an agent should run `shiplog brief` **before** editing and `shiplog add`
-**after** making a decision. A drop-in `AGENT.md` snippet lands in M6.
+- **M6** — polish + agent ergonomics: copy-paste [`AGENT.md`](./AGENT.md) protocol (brief-in /
+  add-out), README quickstart, runnable [`demo/`](./demo) walkthrough, and OIDC trusted-publishing
+  release workflow (`.github/workflows/release.yml`) for TestPyPI → PyPI. 🚧
 
 ## License
 
