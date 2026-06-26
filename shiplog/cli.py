@@ -14,7 +14,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from . import __version__
+from . import __version__, hooks
 from .blame import blame as run_blame
 from .blame import blame_to_dict, parse_target
 from .brief import DEFAULT_BUDGET, brief_to_dict, build_brief
@@ -63,6 +63,18 @@ def _resolve_repo_root() -> Path:
             "(or `git init` first)."
         )
     return ctx.repo_root  # type: ignore[return-value]
+
+
+def _rel_to_repo(path: Path, repo_root: Path) -> str:
+    """Render ``path`` relative to ``repo_root`` when possible (for tidy output).
+
+    Falls back to the absolute path if ``path`` lives outside the repo (e.g. a
+    ``core.hooksPath`` pointing elsewhere).
+    """
+    try:
+        return str(path.relative_to(repo_root))
+    except ValueError:
+        return str(path)
 
 
 def _split_csv(value: str | None) -> list[str]:
@@ -508,6 +520,114 @@ def blame(
         return
 
     console.print(blame_render(result))
+
+
+# -- hook subcommands ---------------------------------------------------------
+
+hook_app = typer.Typer(
+    name="hook",
+    help="Manage the prepare-commit-msg nudge (reminds you to log decisions).",
+    no_args_is_help=True,
+    add_completion=False,
+)
+app.add_typer(hook_app)
+
+
+@hook_app.command("install")
+def hook_install(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite a pre-existing, non-ship-log prepare-commit-msg hook.",
+    ),
+) -> None:
+    """Install the prepare-commit-msg nudge hook in this repo.
+
+    The hook spots "interesting" commits (several files, or a decision-like
+    message) and injects a *commented* reminder into the commit-message template.
+    It never blocks a commit and never edits the final message. Idempotent: safe
+    to run repeatedly. Won't clobber a foreign hook unless ``--force``.
+    """
+    repo_root = _resolve_repo_root()
+    try:
+        result = hooks.install(repo_root, force=force)
+    except FileExistsError as exc:
+        _fail(str(exc))
+    except RuntimeError as exc:
+        _fail(str(exc))
+
+    rel = _rel_to_repo(result.hook_file, repo_root)
+    if result.action == "unchanged":
+        console.print(f"⚓ hook already installed at [bold]{rel}[/bold] (up to date).")
+    else:
+        verb = "installed" if result.action == "created" else "updated"
+        console.print(f"⚓ prepare-commit-msg nudge [green]{verb}[/green] at [bold]{rel}[/bold].")
+        console.print(
+            "  It'll nudge you to [bold]shiplog add[/bold] on notable commits "
+            "(never blocks). Remove with [bold]shiplog hook uninstall[/bold].",
+            style="dim",
+        )
+
+
+@hook_app.command("uninstall")
+def hook_uninstall() -> None:
+    """Remove the ship-log nudge hook (surgical + reversible).
+
+    Deletes the hook if it's purely ours, or strips just our block if you've added
+    your own content alongside it. Leaves foreign hooks untouched.
+    """
+    repo_root = _resolve_repo_root()
+    try:
+        result = hooks.uninstall(repo_root)
+    except RuntimeError as exc:
+        _fail(str(exc))
+
+    rel = _rel_to_repo(result.hook_file, repo_root)
+    if result.action == "absent":
+        console.print("no ship-log hook installed here — nothing to remove.", style="dim")
+    elif result.action == "removed":
+        console.print(f"⚓ removed the nudge hook ([bold]{rel}[/bold]).")
+    else:  # stripped
+        console.print(
+            f"⚓ stripped the ship-log block from [bold]{rel}[/bold] "
+            "(your other hook content was kept)."
+        )
+
+
+@hook_app.command("status")
+def hook_status() -> None:
+    """Report whether the ship-log nudge hook is installed in this repo."""
+    repo_root = _resolve_repo_root()
+    if hooks.status(repo_root):
+        console.print("⚓ ship-log nudge hook: [green]installed[/green].")
+    else:
+        console.print(
+            "ship-log nudge hook: [yellow]not installed[/yellow]. "
+            "Add it with [bold]shiplog hook install[/bold]."
+        )
+
+
+@hook_app.command("_nudge", hidden=True)
+def hook_nudge(
+    msg_file: str = typer.Argument(..., help="Path to the commit message file (git $1)."),
+    source: str = typer.Argument("", help="Commit source (git $2): message/merge/squash/..."),
+) -> None:
+    """Internal: invoked by the installed hook. Not for direct use.
+
+    Appends a commented nudge to the commit-message file when the pending commit
+    looks notable. Always exits 0 so it can never block a commit.
+    """
+    ctx = GitContext.capture()
+    if ctx.repo_root is None:
+        raise typer.Exit(0)
+    threshold = Config.load(ctx.repo_root).hook_file_threshold
+    try:
+        hooks.run_nudge(ctx.repo_root, msg_file, source, file_threshold=threshold)
+    except Exception:
+        # Belt-and-suspenders: nothing here may ever fail a commit.
+        pass
+    raise typer.Exit(0)
 
 
 if __name__ == "__main__":  # pragma: no cover
