@@ -10,6 +10,14 @@ line and a "why." The next agent reads the log before touching code — and skip
 > Not `git blame` (who/when). Not a diff reviewer (is-this-good).
 > It's the *forward-looking memory* of what's already been tried here.
 
+## Demo
+
+![ship-log demo: init, log a decision + a dead-end, then brief reads it back](./demo/shiplog.gif)
+
+*`brief`-in / `add`-out in ~8 seconds: log a decision and a dead-end, then watch `brief`
+lead with the dead-end so the next agent skips the graveyard.* Regenerate it (or grab the
+asciinema [`shiplog.cast`](./demo/shiplog.cast)) from [`demo/`](./demo).
+
 ## Why
 
 - AI-assisted PR volume is up ~29% YoY — the bottleneck is now **coordination & memory**, not typing.
@@ -134,8 +142,9 @@ shiplog brief                  # read this BEFORE you edit — skip known dead-e
 shiplog add deadend "Tried X; it broke Y" --why "..." --files path  # log it AFTER
 ```
 
-See [`demo/`](./demo) for a runnable walkthrough (`./demo/demo.sh`) you can also record to
-an asciinema cast.
+See [`demo/`](./demo) for a runnable walkthrough (`./demo/demo.sh`) plus a recorded
+asciinema cast ([`shiplog.cast`](./demo/shiplog.cast)) and the [`shiplog.gif`](./demo/shiplog.gif)
+shown above.
 
 ## Status
 
@@ -154,8 +163,10 @@ an asciinema cast.
   prioritizing working-tree / `--files`; `--limit` size budget; `--json` variant), via
   `shiplog/brief.py`. ✅
 - **M6** — polish + agent ergonomics: copy-paste [`AGENT.md`](./AGENT.md) protocol (brief-in /
-  add-out), README quickstart, runnable [`demo/`](./demo) walkthrough, and OIDC trusted-publishing
-  release workflow (`.github/workflows/release.yml`) for TestPyPI → PyPI. 🚧
+  add-out), README quickstart, runnable [`demo/`](./demo) walkthrough with a recorded
+  [cast + gif](./demo/shiplog.gif), and OIDC trusted-publishing release workflow
+  (`.github/workflows/release.yml`) for TestPyPI → PyPI. 🚧 *(remaining: push the
+  `v0.1.0` tag once the trusted publisher is configured)*
 
 ### Backlog (v0.2+)
 
