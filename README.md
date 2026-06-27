@@ -130,6 +130,35 @@ the line wins, then nearer ranges, then whole-file references, with newest break
 Plain (range-less) entries still match — they just rank below a line-pinned one. If nothing
 touches the file you get a friendly hint, not an error.
 
+### Commit-time nudge (git hook)
+
+The log only helps if it stays fresh. `shiplog hook install` adds an opt-in
+`prepare-commit-msg` git hook that spots *interesting* commits and reminds you to log a
+decision — **without ever blocking the commit**.
+
+```bash
+shiplog hook install      # add the prepare-commit-msg nudge to this repo
+shiplog hook status       # is it installed?
+shiplog hook uninstall    # remove it (surgical + reversible)
+```
+
+A commit is “interesting” when it touches several files (default ≥ 3, tune via
+`hook_file_threshold` in `.shiplog/config.toml`) **or** its subject smells like a real
+decision (`refactor`, `rewrite`, `switch to`, `drop`, `revert`, `breaking`, …). When it
+is, the hook injects a few **commented** lines into your commit-message template:
+
+```text
+# ⚓ ship-log: this looks like a notable change. Consider logging a decision
+#    so the next agent (or you, tomorrow) knows the *why*:
+#      shiplog add decision "<your subject>" --why "..."
+```
+
+Git strips comment lines before committing, so the nudge shows up where you're already
+typing, then **vanishes from the actual commit** — zero pollution, and it's impossible to
+“fail.” It stays out of the way for non-interactive commits (`-m`, merges, squashes,
+rewords). Installing never clobbers a pre-existing hook (use `--force` to overwrite), and
+uninstall removes only ship-log's block if you've added your own content alongside it.
+
 ## For agents
 
 The whole point: an agent runs `shiplog brief` **before** editing and `shiplog add`
@@ -173,6 +202,8 @@ shown above.
 - **`shiplog blame <file>:<line>`** — nearest logged decision/dead-end for a line
   (containment → proximity → recency), with `--json`. ✅ Anchor entries via
   `--files path:start-end`.
+- **Git hook installer** — `shiplog hook install` adds a non-blocking
+  `prepare-commit-msg` nudge to log a decision on interesting commits. ✅
 
 ## License
 

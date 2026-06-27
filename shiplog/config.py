@@ -28,6 +28,9 @@ DEFAULTS: dict[str, Any] = {
     "default_type": "note",
     # Empty author => fall back to git config at write time (see gitctx).
     "author": "",
+    # Commits touching >= this many files trip the prepare-commit-msg nudge
+    # (the decision-pattern check fires regardless of count).
+    "hook_file_threshold": 3,
     "schema_version": 1,
 }
 
@@ -73,6 +76,7 @@ class Config:
 
     default_type: str = DEFAULTS["default_type"]
     author: str = DEFAULTS["author"]
+    hook_file_threshold: int = DEFAULTS["hook_file_threshold"]
     schema_version: int = DEFAULTS["schema_version"]
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -84,11 +88,12 @@ class Config:
         round-tripping the file never loses user settings.
         """
         merged = {**DEFAULTS, **data}
-        known = {"default_type", "author", "schema_version"}
+        known = {"default_type", "author", "hook_file_threshold", "schema_version"}
         extra = {k: v for k, v in data.items() if k not in known}
         return cls(
             default_type=str(merged["default_type"]),
             author=str(merged["author"]),
+            hook_file_threshold=int(merged["hook_file_threshold"]),
             schema_version=int(merged["schema_version"]),
             extra=extra,
         )
@@ -108,6 +113,7 @@ class Config:
         data: dict[str, Any] = {
             "default_type": self.default_type,
             "author": self.author,
+            "hook_file_threshold": self.hook_file_threshold,
             "schema_version": self.schema_version,
         }
         data.update(self.extra)
@@ -134,6 +140,10 @@ def default_config_text() -> str:
         "# Override the author string. Leave empty to use your git config\n"
         '# (user.name <user.email>).\n'
         f'author = "{DEFAULTS["author"]}"\n'
+        "\n"
+        "# `shiplog hook` nudges on commits touching at least this many files\n"
+        "# (a decision-like message nudges regardless of count).\n"
+        f"hook_file_threshold = {DEFAULTS['hook_file_threshold']}\n"
         "\n"
         "# Config format version. Don't edit by hand.\n"
         f"schema_version = {DEFAULTS['schema_version']}\n"
