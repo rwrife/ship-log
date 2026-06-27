@@ -29,6 +29,7 @@ asciinema [`shiplog.cast`](./demo/shiplog.cast)) from [`demo/`](./demo).
 ```bash
 pipx install ship-log          # isolated, on your PATH (recommended)
 shiplog --version              # -> shiplog 0.1.0
+python -m shiplog --version    # same thing, no PATH shim (handy in CI/venvs)
 ```
 
 > Publishing to PyPI is wired up via OIDC trusted publishing (see
