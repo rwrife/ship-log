@@ -15,6 +15,7 @@ import typer
 from rich.console import Console
 
 from . import __version__, hooks
+from . import mcp as mcp_server
 from .blame import blame as run_blame
 from .blame import blame_to_dict, parse_target
 from .brief import DEFAULT_BUDGET, brief_to_dict, build_brief
@@ -520,6 +521,22 @@ def blame(
         return
 
     console.print(blame_render(result))
+
+
+@app.command()
+def mcp() -> None:
+    """Start a stdio MCP server exposing add/brief/ls as Model Context Protocol tools.
+
+    Lets agents call ship-log natively (``shiplog_add`` / ``shiplog_brief`` /
+    ``shiplog_ls``) instead of shelling out and scraping text — backed by the exact
+    same store/ranking/filters as the CLI. The server speaks newline-delimited
+    JSON-RPC on stdin/stdout and operates on the repo it's launched in, so point a
+    client at a repo by setting that repo as the server's working directory.
+
+    Runs until stdin closes (EOF). See the README "MCP server mode" section for a
+    client install snippet.
+    """
+    raise typer.Exit(mcp_server.serve())
 
 
 # -- hook subcommands ---------------------------------------------------------
