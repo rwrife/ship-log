@@ -28,6 +28,7 @@ asciinema [`shiplog.cast`](./demo/shiplog.cast)) from [`demo/`](./demo).
 
 ```bash
 pipx install ship-log          # isolated, on your PATH (recommended)
+pipx install 'ship-log[tui]'   # …with the optional full-screen browser (shiplog tui)
 shiplog --version              # -> shiplog 0.1.0
 python -m shiplog --version    # same thing, no PATH shim (handy in CI/venvs)
 ```
@@ -104,6 +105,31 @@ _focus: shiplog/store.py · 2 dead-ends · 5 of 5 entries_
 The digest is ranked *before* the size budget is applied, so truncation always drops
 the least-relevant tail — never a dead-end in favor of an old note. Output is plain
 markdown (verbatim, no ANSI) so it's clean when piped into a prompt.
+
+### Browse it (TUI) — the cozy full-screen view
+
+Prefer scrolling to grepping? `shiplog tui` opens a full-screen, keyboard-first
+browser: a newest-first Rich table on the left, a detail pane on the right, and a
+live filter box. It reuses the **exact same** store/filters/rendering as
+`ls`/`show` (no logic fork) — it's just a cozier lens on the same log.
+
+```bash
+pipx install 'ship-log[tui]'   # the TUI needs the optional `textual` dependency
+shiplog tui                    # full-screen browser of this repo's log
+```
+
+Keyboard-first navigation:
+
+- **`/`** — jump to the search box; type to filter live across
+  summary / why / tags / files / id (space-separated terms are AND-combined).
+- **`t`** / **`T`** — cycle the type filter forward / back
+  (all → dead-end → decision → attempt → note → all).
+- **`↑` / `↓` + `Enter`** — move the selection; the detail pane follows.
+- **`Esc`** — clear the search (then hand focus back to the list).
+- **`q`** — quit.
+
+If the `textual` extra isn't installed, `shiplog tui` prints a one-line install
+hint instead of a traceback — every other command works without it.
 
 ### Blame a line — the "why" `git blame` lacks
 
@@ -252,6 +278,9 @@ printf '%s\n' \
 - **MCP server mode** — `shiplog mcp` exposes `shiplog_add`/`shiplog_brief`/`shiplog_ls`
   as Model Context Protocol tools over stdio (same store/ranking/filters as the CLI), so
   agents call ship-log natively. ✅ See [MCP server mode](#mcp-server-mode).
+- **`shiplog tui`** — full-screen Textual browser: newest-first table, detail pane,
+  live free-text + type filtering, keyboard-first (`/` search, `t` cycle type, `q`
+  quit). ✅ Optional extra: `pipx install 'ship-log[tui]'`.
 
 ## License
 
