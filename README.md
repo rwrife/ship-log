@@ -176,6 +176,50 @@ See [`demo/`](./demo) for a runnable walkthrough (`./demo/demo.sh`) plus a recor
 asciinema cast ([`shiplog.cast`](./demo/shiplog.cast)) and the [`shiplog.gif`](./demo/shiplog.gif)
 shown above.
 
+## MCP server mode
+
+Prefer that your agent call ship-log as **native tools** instead of shelling out? Run
+the built-in [Model Context Protocol](https://modelcontextprotocol.io) server:
+
+```bash
+shiplog mcp        # stdio MCP server, operates on the repo it's launched in
+```
+
+It speaks newline-delimited JSON-RPC on stdin/stdout and exposes three tools — backed
+by the **exact same** store/ranking/filters as the CLI (no logic fork):
+
+- **`shiplog_brief`** — token-efficient digest (dead-ends first) to read *before* editing.
+- **`shiplog_add`** — append a `decision`/`attempt`/`deadend`/`note` (git-stamped) *after* deciding.
+- **`shiplog_ls`** — list entries newest-first with optional `type`/`tag`/`file`/`since`/`limit` filters.
+
+Each tool returns both a human-readable text block and `structuredContent` (the same
+stable JSON as the CLI's `--json`).
+
+**Point a client at a repo** by launching the server with that repo as its working
+directory. For a Claude Desktop–style client, add to its MCP config:
+
+```json
+{
+  "mcpServers": {
+    "ship-log": {
+      "command": "shiplog",
+      "args": ["mcp"],
+      "cwd": "/absolute/path/to/your/repo"
+    }
+  }
+}
+```
+
+(For a clone instead of an install, use `"command": "uv"` /
+`"args": ["run", "shiplog", "mcp"]`, or point at the venv's `shiplog`.) The repo must
+have been `shiplog init`'d. Quick manual smoke test:
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | shiplog mcp
+```
+
 ## Status
 
 🚧 v0.1 in progress. See [`PLAN.md`](./PLAN.md) for scope, architecture, and milestones (M1–M6).
@@ -205,6 +249,9 @@ shown above.
   `--files path:start-end`.
 - **Git hook installer** — `shiplog hook install` adds a non-blocking
   `prepare-commit-msg` nudge to log a decision on interesting commits. ✅
+- **MCP server mode** — `shiplog mcp` exposes `shiplog_add`/`shiplog_brief`/`shiplog_ls`
+  as Model Context Protocol tools over stdio (same store/ranking/filters as the CLI), so
+  agents call ship-log natively. ✅ See [MCP server mode](#mcp-server-mode).
 
 ## License
 

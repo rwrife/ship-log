@@ -60,6 +60,17 @@ That's it: **`brief` in, `add` out.**
 
 ---
 
+## Prefer native tools? (MCP)
+
+If your client speaks the [Model Context Protocol](https://modelcontextprotocol.io),
+run `shiplog mcp` (a stdio MCP server) so you call ship-log as **tools** instead of
+shelling out: `shiplog_brief` before editing, `shiplog_add` after deciding, and
+`shiplog_ls` to list. Same behavior as the CLI commands above. Launch the server with
+the target repo as its working directory; see the README's *MCP server mode* section
+for a client config snippet.
+
+---
+
 ## Why this matters
 
 AI-assisted PR volume keeps climbing, and the bottleneck has moved from *typing* to
