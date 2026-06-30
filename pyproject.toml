@@ -27,9 +27,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tui = [
+    "textual>=0.60",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
+    "textual>=0.60",
 ]
 
 [project.urls]

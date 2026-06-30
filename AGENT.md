@@ -69,6 +69,10 @@ shelling out: `shiplog_brief` before editing, `shiplog_add` after deciding, and
 the target repo as its working directory; see the README's *MCP server mode* section
 for a client config snippet.
 
+*(Browsing by hand? `shiplog tui` — from the optional `ship-log[tui]` extra — opens a
+full-screen, filterable view of the same log. That's for humans; agents should use
+`brief`/`add` or the MCP tools above.)*
+
 ---
 
 ## Why this matters

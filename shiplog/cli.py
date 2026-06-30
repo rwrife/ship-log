@@ -36,6 +36,7 @@ from .render import (
     entry_panel,
 )
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
+from .tui import run_tui
 
 app = typer.Typer(
     name="shiplog",
@@ -521,6 +522,30 @@ def blame(
         return
 
     console.print(blame_render(result))
+
+
+@app.command()
+def tui() -> None:
+    """Open a full-screen, filterable browser of the log — the cozy way to explore.
+
+    Scroll entries newest-first in a Rich table, filter live by free-text search
+    (summary/why/tags/files) and by type (``t`` cycles deadend/decision/…), and
+    read full rationale in a detail pane as you move the selection. Keyboard-first:
+    ``/`` search, ``t``/``T`` cycle type, ``Esc`` clear, ``q`` quit. Reuses the same
+    store/filters/rendering as ``ls``/``show`` (no logic fork).
+
+    Needs the optional ``textual`` dependency: install the ``tui`` extra with
+    ``pip install "ship-log\[tui]"`` (a clear hint is printed if it's missing).
+    """
+    store = _open_store_for_read()
+    repo_root = _resolve_repo_root()
+    entries = store.read_all()
+    if not entries:
+        console.print(
+            empty_note("the log is empty — nothing to browse yet. Try shiplog add.")
+        )
+        return
+    raise typer.Exit(run_tui(entries, repo_label=repo_root.name))
 
 
 @app.command()
