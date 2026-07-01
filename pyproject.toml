@@ -47,6 +47,14 @@ shiplog = "shiplog.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["shiplog"]
 
+[tool.hatch.build.targets.sdist]
+# Keep the published sdist lean: ship code + docs, not the heavy demo recording
+# assets (the gif/cast still live in the repo for the README).
+exclude = [
+    "demo/shiplog.gif",
+    "demo/shiplog.cast",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

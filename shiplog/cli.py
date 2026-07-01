@@ -535,7 +535,7 @@ def tui() -> None:
     store/filters/rendering as ``ls``/``show`` (no logic fork).
 
     Needs the optional ``textual`` dependency: install the ``tui`` extra with
-    ``pip install "ship-log\[tui]"`` (a clear hint is printed if it's missing).
+    ``pip install "ship-log[tui]"`` (a clear hint is printed if it's missing).
     """
     store = _open_store_for_read()
     repo_root = _resolve_repo_root()

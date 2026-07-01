@@ -264,9 +264,10 @@ printf '%s\n' \
   `shiplog/brief.py`. ✅
 - **M6** — polish + agent ergonomics: copy-paste [`AGENT.md`](./AGENT.md) protocol (brief-in /
   add-out), README quickstart, runnable [`demo/`](./demo) walkthrough with a recorded
-  [cast + gif](./demo/shiplog.gif), and OIDC trusted-publishing release workflow
-  (`.github/workflows/release.yml`) for TestPyPI → PyPI. 🚧 *(remaining: push the
-  `v0.1.0` tag once the trusted publisher is configured)*
+  [cast + gif](./demo/shiplog.gif), a [`CHANGELOG`](./CHANGELOG.md), a warning-free import,
+  a lean published sdist, and an OIDC trusted-publishing release workflow
+  (`.github/workflows/release.yml`) for TestPyPI → PyPI. ✅ 🚧 *(owner action: configure the
+  trusted publisher, then push the `v0.1.0` tag to publish)*
 
 ### Backlog (v0.2+)
 
