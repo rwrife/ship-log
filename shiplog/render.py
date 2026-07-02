@@ -19,6 +19,7 @@ from rich.text import Text
 from .blame import BlameHit, BlameResult
 from .brief import Brief
 from .models import Entry, EntryType
+from .stats import Stats
 
 # One accent color per type — dead-ends shout, notes whisper.
 _TYPE_STYLE: dict[str, str] = {
@@ -283,3 +284,161 @@ def brief_markdown(brief: Brief) -> str:
         lines.append(f"_+{brief.truncated} more in `shiplog ls`._")
 
     return "\n".join(lines)
+
+
+# -- stats (whole-log analytics digest) ----------------------------------
+
+# Blocks for the tiny inline sparkline used by the per-week activity table. Eight
+# levels from near-empty to full; index 0 is a low block so a nonzero-but-small
+# week is still visible (an all-spaces sparkline would read as "no data").
+_SPARK_BLOCKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+
+
+def _sparkline(counts: list[int]) -> str:
+    """Render a list of counts as a unicode block sparkline (empty string if none).
+
+    Zero always maps to a space (a genuine gap in the log reads as a gap); nonzero
+    values scale across the block ramp relative to the max, so the busiest week is
+    a full block and quieter weeks step down from there.
+    """
+    if not counts:
+        return ""
+    peak = max(counts)
+    if peak <= 0:
+        return " " * len(counts)
+    out: list[str] = []
+    top = len(_SPARK_BLOCKS) - 1
+    for c in counts:
+        if c <= 0:
+            out.append(" ")
+            continue
+        # Scale 1..peak onto 0..top, keeping the smallest nonzero visible.
+        idx = round((c / peak) * top)
+        out.append(_SPARK_BLOCKS[max(1, idx) if c > 0 else 0])
+    return "".join(out)
+
+
+def _type_bar(count: int, peak: int, *, width: int = 12) -> Text:
+    """A tiny proportional bar (``count`` relative to ``peak``) for the totals table."""
+    if peak <= 0:
+        return Text("")
+    filled = 0 if count == 0 else max(1, round((count / peak) * width))
+    return Text("\u2588" * filled, style="dim")
+
+
+def _fmt_span(stats: Stats) -> str:
+    """Human 'first -> last' span line, using the short-ts formatter.
+
+    Collapses to a single stamp only for a genuine one-entry log (``total == 1``);
+    several entries logged in the same second share a ``ts`` but must still read as
+    a range, not '(single entry)'.
+    """
+    first = _short_ts(stats.first_ts) or "?"
+    last = _short_ts(stats.last_ts) or "?"
+    if stats.total <= 1 or first == last:
+        return f"{first}" if stats.total <= 1 else f"{first}  (same day)"
+    return f"{first}  \u2192  {last}"
+
+
+def _totals_table(stats: Stats) -> Table:
+    """Totals-by-type with a proportional bar and the headline dead-end ratio."""
+    peak = max(stats.by_type.values(), default=0)
+    table = Table(
+        title="Totals by type",
+        title_justify="left",
+        header_style="bold",
+        expand=False,
+        pad_edge=False,
+        box=None,
+    )
+    table.add_column("type", no_wrap=True)
+    table.add_column("count", justify="right", no_wrap=True)
+    table.add_column("", no_wrap=True)
+    for type_value, count in stats.by_type.items():
+        table.add_row(type_text(type_value), str(count), _type_bar(count, peak))
+    ratio = (
+        "[dim]n/a (nothing tried yet)[/dim]"
+        if stats.deadend_ratio is None
+        else f"[bold]{stats.deadend_ratio * 100:.0f}%[/bold]"
+    )
+    table.add_row(Text("dead-end ratio", style="dim"), "", Text.from_markup(ratio))
+    return table
+
+
+def _activity_table(stats: Stats) -> Table:
+    """Recent-window counts (7d / 30d) plus a per-week sparkline + tail table."""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(justify="right", style="bold")
+    table.add_column(overflow="fold")
+    for days in sorted(stats.recent):
+        table.add_row(f"last {days}d:", str(stats.recent[days]))
+    if stats.per_week:
+        counts = [c for _, c in stats.per_week]
+        spark = _sparkline(counts)
+        weeks = len(stats.per_week)
+        table.add_row(
+            f"per week ({weeks}):",
+            Text(f"{spark}  ", style="cyan") + Text(f"peak {max(counts)}/wk", style="dim"),
+        )
+    return table
+
+
+def _top_table(title: str, rows: list[tuple[str, int]], *, empty: str) -> Table:
+    """A small right-aligned-count 'top N' table (files / tags / authors)."""
+    table = Table(
+        title=title,
+        title_justify="left",
+        header_style="bold",
+        expand=False,
+        pad_edge=False,
+        box=None,
+    )
+    table.add_column("", overflow="fold")
+    table.add_column("n", justify="right", no_wrap=True, style="dim")
+    if not rows:
+        table.add_row(Text(empty, style="dim italic"), "")
+        return table
+    for name, count in rows:
+        table.add_row(name, str(count))
+    return table
+
+
+def stats_render(stats: Stats) -> Group:
+    """Render a :class:`~shiplog.stats.Stats` as a compact, skimmable dashboard.
+
+    Leads with a one-line header (total + span), then totals-by-type with the
+    dead-end ratio, a recent-activity block (7d/30d + per-week sparkline), and
+    three 'top' tables (files, tags, authors). The caller handles the empty-log
+    case with a friendly note, so this assumes at least one entry.
+    """
+    header = Text.assemble(
+        ("\u2693 ship-log stats", "bold"),
+        (f"  \u00b7  {stats.total} entr{'y' if stats.total == 1 else 'ies'}", "dim"),
+        (f"  \u00b7  {_fmt_span(stats)}", "dim"),
+    )
+
+    tops = Table.grid(padding=(0, 3))
+    tops.add_column()
+    tops.add_column()
+    tops.add_column()
+    tops.add_row(
+        _top_table("Top files", stats.top_files, empty="(no files logged)"),
+        _top_table("Top tags", stats.top_tags, empty="(no tags)"),
+        _top_table("Top authors", stats.top_authors, empty="(no authors)"),
+    )
+
+    return Group(
+        header,
+        Text(""),
+        _totals_table(stats),
+        Text(""),
+        Panel(
+            _activity_table(stats),
+            title="Activity",
+            title_align="left",
+            border_style="cyan",
+            expand=False,
+        ),
+        Text(""),
+        tops,
+    )

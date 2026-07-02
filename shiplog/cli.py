@@ -34,7 +34,9 @@ from .render import (
     empty_note,
     entries_table,
     entry_panel,
+    stats_render,
 )
+from .stats import DEFAULT_TOP_N, compute_stats, stats_to_dict
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
 from .tui import run_tui
 
@@ -468,6 +470,61 @@ def brief(
     # Print the markdown verbatim (no Rich markup interpretation) so it's exactly
     # what lands in a prompt -- and clean when piped/redirected.
     print(brief_markdown(digest))
+
+
+@app.command()
+def stats(
+    since: str = typer.Option(
+        "",
+        "--since",
+        help="Only entries at/after a time: relative (7d, 24h, 4w) or ISO date.",
+    ),
+    top: int = typer.Option(
+        DEFAULT_TOP_N,
+        "--top",
+        help=f"Rows per top-files/tags/authors list (default {DEFAULT_TOP_N}; 0 = all).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a JSON object of the figures instead of the dashboard.",
+    ),
+) -> None:
+    """Summarize the whole log: totals, dead-end ratio, activity, and hotspots.
+
+    The bird's-eye companion to ``brief``: totals by type, the **dead-end ratio**
+    (deadends / decisions+attempts -- the 'how much did we thrash' number), recent
+    activity (last 7/30 days + a per-week sparkline), and the top files / tags /
+    authors. ``--since`` reuses the same time parsing as ``ls``/``brief`` (relative
+    ``7d``/``24h`` or an ISO date); ``--json`` emits a stable object with the same
+    figures (``by_type``, ``deadend_ratio``, ``recent``, ``per_week``, ``top_*``,
+    ``first_ts``/``last_ts``). An empty log prints a friendly note (exit 0).
+    """
+    since_dt = None
+    if since.strip():
+        try:
+            since_dt = parse_since(since)
+        except ValueError as exc:
+            _fail(str(exc))
+
+    store = _open_store_for_read()
+    entries = filter_entries(store.read_all(), since=since_dt)
+    summary = compute_stats(entries, top_n=top)
+
+    if as_json:
+        console.print_json(json.dumps(stats_to_dict(summary), ensure_ascii=False))
+        return
+
+    if summary.is_empty:
+        hint = (
+            "no entries in that window."
+            if since.strip()
+            else "no entries yet -- log one with shiplog add."
+        )
+        console.print(empty_note(hint))
+        return
+
+    console.print(stats_render(summary))
 
 
 @app.command()
