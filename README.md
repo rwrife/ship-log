@@ -157,6 +157,27 @@ the line wins, then nearer ranges, then whole-file references, with newest break
 Plain (range-less) entries still match — they just rank below a line-pinned one. If nothing
 touches the file you get a friendly hint, not an error.
 
+### Stats — the whole-log health read
+
+`shiplog stats` zooms all the way out: a compact dashboard of the *entire* log. Where
+`brief` is per-context ("what should I know before touching these files"), `stats` answers
+*"are we deciding or thrashing?"* — led by the **dead-end ratio** (`deadends / (decisions +
+attempts)`), plus recent activity, decision hotspots, and who's logging.
+
+```bash
+shiplog stats                  # totals by type + dead-end ratio, activity, top files/tags/authors
+shiplog stats --since 30d      # window it (relative 7d/24h/2w or an ISO date — same parser as ls/brief)
+shiplog stats --top 10         # more rows in the top-files/tags/authors lists (0 = all)
+shiplog stats --json           # stable object for agents (keys below)
+```
+
+The `--json` object is stable for agents: `total`, `by_type` (`{type: count}`),
+`deadend_ratio` (float in `[0,1]`, or `null` when nothing's been tried yet — no
+divide-by-zero), `recent` (`{"7": n, "30": n}`), `per_week` (`[{week, count}, …]`, oldest
+first), `top_files` / `top_tags` / `top_authors` (`[{name, count}, …]`, highest first), and
+the `first_ts`/`last_ts` span. An empty log prints a friendly "no entries yet" line and
+exits 0.
+
 ### Commit-time nudge (git hook)
 
 The log only helps if it stays fresh. `shiplog hook install` adds an opt-in
@@ -282,6 +303,9 @@ printf '%s\n' \
 - **`shiplog tui`** — full-screen Textual browser: newest-first table, detail pane,
   live free-text + type filtering, keyboard-first (`/` search, `t` cycle type, `q`
   quit). ✅ Optional extra: `pipx install 'ship-log[tui]'`.
+- **`shiplog stats`** — whole-log analytics: totals by type, dead-end ratio,
+  recent activity (7d/30d + per-week sparkline), and top files/tags/authors, with
+  `--since`/`--top`/`--json`. ✅ See [Stats](#stats--the-whole-log-health-read).
 
 ## License
 
