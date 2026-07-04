@@ -178,6 +178,30 @@ first), `top_files` / `top_tags` / `top_authors` (`[{name, count}, …]`, highes
 the `first_ts`/`last_ts` span. An empty log prints a friendly "no entries yet" line and
 exits 0.
 
+### Export it — durable ADR / CHANGELOG markdown for humans
+
+`brief` is *ephemeral* (token-tuned, for agents). `shiplog export` is *persistent*: it
+renders the log into human-facing markdown you commit and ship at milestones. Log
+continuously → export for humans when you cut a release.
+
+```bash
+shiplog export adr --out docs/adr/            # one classic NNNN-slug.md per DECISION entry
+shiplog export changelog                      # grouped digest (decisions + dead-ends) to stdout
+shiplog export changelog --out CHANGELOG.shiplog.md   # …or write it to a file
+shiplog export changelog --since 30d --tag release    # reuse the ls filters (--since/--type/--tag)
+```
+
+- **`adr`** → an [Architecture Decision Record](https://adr.github.io/) set: one
+  `NNNN-slug.md` per `decision`, numbered from log order (stable — a decision keeps its
+  number as earlier ones don't change), with front-matter, rationale, affected files, and
+  the source entry id for traceability. `--out <dir>` is required.
+- **`changelog`** → a single markdown digest grouping decisions + dead-ends by date
+  (newest first); prints to stdout, or `--out <file>` to write it.
+
+Output is **deterministic**: re-running with no new entries rewrites nothing
+(byte-identical, so committing the results is a clean no-op diff). An empty/filtered-to-
+nothing selection prints a friendly note and exits 0 without writing any partial files.
+
 ### Commit-time nudge (git hook)
 
 The log only helps if it stays fresh. `shiplog hook install` adds an opt-in
@@ -306,6 +330,10 @@ printf '%s\n' \
 - **`shiplog stats`** — whole-log analytics: totals by type, dead-end ratio,
   recent activity (7d/30d + per-week sparkline), and top files/tags/authors, with
   `--since`/`--top`/`--json`. ✅ See [Stats](#stats--the-whole-log-health-read).
+- **`shiplog export`** — durable, human-facing markdown: an `adr` set (one
+  `NNNN-slug.md` per decision) or a grouped `changelog` digest, reusing the `ls`
+  filters and deterministic (idempotent, safe to commit). ✅ See
+  [Export](#export-it--durable-adr--changelog-markdown-for-humans).
 
 ## License
 

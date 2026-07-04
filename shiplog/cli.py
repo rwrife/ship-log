@@ -25,6 +25,12 @@ from .config import (
     config_path_for_repo,
     default_config_text,
 )
+from .export import (
+    ADR,
+    FORMATS,
+    build_adr_set,
+    render_changelog,
+)
 from .filters import filter_entries, parse_since, sort_newest_first
 from .gitctx import GitContext, working_tree_files
 from .models import Entry, EntryType
@@ -525,6 +531,173 @@ def stats(
         return
 
     console.print(stats_render(summary))
+
+
+def _filtered_for_export(
+    store: Store,
+    *,
+    type_: str,
+    tag: str,
+    since: str,
+) -> list[Entry]:
+    """Read + filter entries for ``export`` using the shared filter helpers.
+
+    Reuses :func:`shiplog.filters.filter_entries` (same ``--type``/``--tag``/
+    ``--since`` semantics as ``ls``) so export never forks filtering. Entries stay
+    in **append order** (chronological) — export ordering (ADR numbering,
+    changelog date grouping) depends on that, so we deliberately do *not*
+    newest-first sort here.
+    """
+    since_dt = None
+    if since.strip():
+        try:
+            since_dt = parse_since(since)
+        except ValueError as exc:
+            _fail(str(exc))
+
+    type_q = type_.strip()
+    if type_q:
+        try:
+            type_q = EntryType.coerce(type_q).value
+        except ValueError as exc:
+            _fail(str(exc))
+
+    return filter_entries(
+        store.read_all(),
+        type_=type_q or None,
+        tag=tag or None,
+        since=since_dt,
+    )
+
+
+def _write_if_changed(path: Path, content: str) -> bool:
+    """Write ``content`` to ``path`` only if it differs; return True if written.
+
+    Idempotency guard: a re-export with no new entries produces byte-identical
+    content, so we skip the write entirely (no mtime churn, clean git status).
+    Parent dirs are created as needed.
+    """
+    if path.exists() and path.read_text(encoding="utf-8") == content:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return True
+
+
+@app.command()
+def export(
+    fmt: str = typer.Argument(
+        ...,
+        metavar="FORMAT",
+        help="What to render: 'adr' (one file per decision) or 'changelog' (one digest).",
+    ),
+    out: str = typer.Option(
+        "",
+        "--out",
+        "-o",
+        help=(
+            "Output path. adr: a directory (one NNNN-slug.md per decision). "
+            "changelog: a file (omit to print to stdout)."
+        ),
+    ),
+    since: str = typer.Option(
+        "",
+        "--since",
+        help="Only entries at/after a time: relative (7d, 24h, 4w) or ISO date.",
+    ),
+    type_: str = typer.Option(
+        "",
+        "--type",
+        "-t",
+        help="Only entries of this type (decision, attempt, deadend, note).",
+    ),
+    tag: str = typer.Option(
+        "",
+        "--tag",
+        help="Only entries carrying this tag.",
+    ),
+) -> None:
+    """Render the log to durable, human-facing markdown (ADR set or CHANGELOG).
+
+    Unlike ``brief`` (ephemeral, agent-facing), ``export`` writes persistent files
+    you commit and ship at milestones:
+
+    * ``shiplog export adr --out docs/adr/`` — one classic ``NNNN-slug.md`` per
+      *decision* entry (stable numbering from log order), a browsable decision
+      archive.
+    * ``shiplog export changelog --out CHANGELOG.shiplog.md`` (or stdout if
+      ``--out`` is omitted) — a single digest grouping decisions + dead-ends by
+      date.
+
+    Reuses the ``ls`` filters (``--since``/``--type``/``--tag``). Output is
+    deterministic: re-running with no new entries rewrites nothing (byte-identical,
+    safe to commit). An empty selection prints a friendly note and exits 0 without
+    writing partial files.
+    """
+    fmt_norm = fmt.strip().lower()
+    if fmt_norm not in FORMATS:
+        _fail(
+            f"unknown export format {fmt!r}; expected one of: {', '.join(FORMATS)}."
+        )
+
+    store = _open_store_for_read()
+    entries = _filtered_for_export(store, type_=type_, tag=tag, since=since)
+
+    if fmt_norm == ADR:
+        _export_adr(entries, out)
+    else:  # CHANGELOG
+        _export_changelog(entries, out)
+
+
+def _export_adr(entries: list[Entry], out: str) -> None:
+    """Write the ADR set to the ``--out`` directory (required for adr)."""
+    if not out.strip():
+        _fail(
+            "adr export needs an output directory: "
+            "[bold]shiplog export adr --out docs/adr/[/bold]."
+        )
+
+    files = build_adr_set(entries)
+    if not files:
+        console.print(
+            empty_note(
+                "no decision entries to export. "
+                'Log one: shiplog add decision "..." --why "...".'
+            )
+        )
+        return
+
+    out_dir = Path(out)
+    written = 0
+    for name, content in files.items():
+        if _write_if_changed(out_dir / name, content):
+            written += 1
+
+    total = len(files)
+    unchanged = total - written
+    rel = out_dir.as_posix().rstrip("/") + "/"
+    console.print(
+        f"\u2693 exported [bold]{total}[/bold] ADR file{'' if total == 1 else 's'} "
+        f"to [bold]{rel}[/bold] "
+        f"([green]{written} written[/green], [dim]{unchanged} unchanged[/dim])."
+    )
+
+
+def _export_changelog(entries: list[Entry], out: str) -> None:
+    """Render the changelog digest to ``--out`` (or stdout when omitted)."""
+    markdown = render_changelog(entries)
+
+    if not out.strip():
+        # Stdout path: print verbatim (no Rich markup) so redirects stay clean.
+        print(markdown, end="")
+        return
+
+    out_path = Path(out)
+    changed = _write_if_changed(out_path, markdown)
+    state = "[green]written[/green]" if changed else "[dim]unchanged[/dim]"
+    console.print(
+        f"\u2693 exported changelog to [bold]{out_path.as_posix()}[/bold] ({state})."
+    )
 
 
 @app.command()
