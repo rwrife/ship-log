@@ -5,6 +5,20 @@ All notable changes to **ship-log** are documented here.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`shiplog link <id>`** — attach a commit / PR / ref to an existing entry *after
+  the fact*. Appends a tiny `link` record pointing back at the target (append-only;
+  the original entry line is never mutated), so a decision logged before the code
+  existed can be tied to the commit/PR that shipped it. `shiplog show <id>` renders
+  a **Links** section (newest-first) and `--json` includes a `links` array. Exactly
+  one of `--commit` / `--pr` / `--ref` is required; `--note` adds a human label.
+  Link records stay out of the default `ls` table and `brief` digest (reveal them
+  with `shiplog ls --type link`). Reuses the existing flat schema — no
+  `SCHEMA_VERSION` bump.
+
 ## [0.1.0] — 2026-06-30
 
 First public release. A git-native, append-only captain's log that lives inside your

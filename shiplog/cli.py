@@ -33,6 +33,7 @@ from .export import (
 )
 from .filters import filter_entries, parse_since, sort_newest_first
 from .gitctx import GitContext, working_tree_files
+from .links import links_for, make_link_summary, split_links
 from .models import Entry, EntryType
 from .render import (
     blame_render,
@@ -313,6 +314,99 @@ def add(
     console.print(f"  {meta}", style="dim")
 
 
+@app.command()
+def link(
+    entry_id: str = typer.Argument(
+        ...,
+        metavar="ID",
+        help="Id (full or unique prefix) of the entry to attach a link to.",
+    ),
+    commit: str = typer.Option(
+        "",
+        "--commit",
+        help="A commit sha this entry shipped in (e.g. abc1234).",
+    ),
+    pr: str = typer.Option(
+        "",
+        "--pr",
+        help="A pull request this entry landed in (e.g. #42 or a URL).",
+    ),
+    ref: str = typer.Option(
+        "",
+        "--ref",
+        help="Any other reference (a ticket, doc, or URL) tying back to this entry.",
+    ),
+    note: str = typer.Option(
+        "",
+        "--note",
+        "-m",
+        help="Optional human note describing the link.",
+    ),
+) -> None:
+    """Attach a commit / PR / ref to an existing entry — after the fact.
+
+    You logged a decision *before* the code existed; later it lands in a commit or
+    PR. Rather than rewrite the past, ``link`` appends a tiny ``link`` record that
+    points back at ``ID`` (append-only — the original entry line is never touched).
+    ``shiplog show <ID>`` then surfaces a **Links** section, newest-first.
+
+    Exactly one of ``--commit`` / ``--pr`` / ``--ref`` is required.
+    """
+    # Exactly one link kind — collect what was given so we can name the offender(s).
+    provided = [
+        (kind, value.strip())
+        for kind, value in (("commit", commit), ("pr", pr), ("ref", ref))
+        if value.strip()
+    ]
+    if not provided:
+        _fail(
+            "one of [bold]--commit[/bold] / [bold]--pr[/bold] / [bold]--ref[/bold] "
+            "is required (what does this entry link to?)."
+        )
+    if len(provided) > 1:
+        given = ", ".join(f"--{k}" for k, _ in provided)
+        _fail(f"give exactly one of --commit / --pr / --ref, not several ({given}).")
+    kind, value = provided[0]
+
+    store = _open_store_for_read()
+    entries = store.read_all()
+    try:
+        target = _find_by_id(entries, entry_id)
+    except LookupError as exc:
+        _fail(str(exc))
+    if target is None:
+        _fail(
+            f"no entry with id {entry_id!r} to link. Try [bold]shiplog ls[/bold] to find one."
+        )
+
+    ctx = GitContext.capture()
+    config = Config.load(ctx.repo_root) if ctx.repo_root is not None else None
+    author = (config.author if config else "") or ctx.author
+
+    link_entry = Entry(
+        summary=make_link_summary(kind, value, note),
+        type=EntryType.LINK,
+        author=author,
+        branch=ctx.branch,
+        sha=ctx.sha,
+        why=note.strip(),
+        ref=value,
+        link_target=target.id,
+        link_kind=kind,
+    )
+    store.append(link_entry)
+
+    console.print(
+        f"\u2693 linked [dim]{target.id}[/dim] \u2192 "
+        f"[bold cyan]{kind}[/bold cyan] {value}"
+    )
+    if note.strip():
+        console.print(f"  note: {note.strip()}", style="dim")
+    console.print(
+        f"  see it on [bold]shiplog show {target.id}[/bold].", style="dim"
+    )
+
+
 @app.command(name="ls")
 def ls(
     type_: str = typer.Option(
@@ -368,8 +462,16 @@ def ls(
             _fail(str(exc))
 
     store = _open_store_for_read()
+    all_entries = store.read_all()
+    # Link records annotate other entries (surfaced in `show`), so they don't
+    # clutter the main table as standalone rows -- unless explicitly asked for
+    # via `--type link`.
+    if type_.strip() == EntryType.LINK.value:
+        source = all_entries
+    else:
+        source, _links = split_links(all_entries)
     entries = filter_entries(
-        store.read_all(),
+        source,
         type_=type_,
         tag=tag,
         file=file,
@@ -417,11 +519,17 @@ def show(
     if entry is None:
         _fail(f"no entry with id {entry_id!r}. Try [bold]shiplog ls[/bold] to find one.")
 
+    # Aggregate any links pointing back at this entry (newest-first).
+    _primary, link_records = split_links(entries)
+    resolved_links = links_for(entry.id, link_records)
+
     if as_json:
-        console.print_json(json.dumps(entry.to_dict(), ensure_ascii=False))
+        payload = entry.to_dict()
+        payload["links"] = [lv.to_dict() for lv in resolved_links]
+        console.print_json(json.dumps(payload, ensure_ascii=False))
         return
 
-    console.print(entry_panel(entry))
+    console.print(entry_panel(entry, links=resolved_links))
 
 
 @app.command()

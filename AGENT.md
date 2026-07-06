@@ -54,6 +54,9 @@ future agents) · `attempt` (in-progress exploration) · `note` (context worth k
 - **One line, then `--why`.** The summary is skim-bait; the rationale goes in `--why`.
 - **Attach `--files`.** It's how `brief` decides what's relevant to the next task.
 - **Don't edit the past.** The log is append-only. To correct an entry, add a new one.
+  To tie a past decision to the commit/PR that shipped it, use `shiplog link <id>
+  --commit <sha>` (or `--pr`/`--ref`) — it appends a linkage record without touching
+  the original, and `shiplog show <id>` surfaces it.
 - **Reference issues/PRs** with `--ref` (e.g. `--ref '#42'`) when a decision ties to one.
 
 That's it: **`brief` in, `add` out.**

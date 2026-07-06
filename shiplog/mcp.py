@@ -49,6 +49,7 @@ from .brief import DEFAULT_BUDGET, brief_to_dict, build_brief
 from .config import Config
 from .filters import filter_entries, parse_since, sort_newest_first
 from .gitctx import GitContext, working_tree_files
+from .links import split_links
 from .models import Entry, EntryType
 from .store import SHIPLOG_DIR, Store
 
@@ -235,8 +236,16 @@ def _tool_ls(args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
     store, _ = _require_repo_store(must_exist=True)
 
+    all_entries = store.read_all()
+    # Mirror the CLI `ls`: link records annotate other entries, so they don't
+    # appear as standalone rows unless explicitly requested via type='link'.
+    if type_q == EntryType.LINK.value:
+        source = all_entries
+    else:
+        source, _links = split_links(all_entries)
+
     entries = filter_entries(
-        store.read_all(),
+        source,
         type_=type_q,
         tag=str(args.get("tag", "") or "").strip(),
         file=str(args.get("file", "") or "").strip(),
