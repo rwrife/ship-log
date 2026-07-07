@@ -32,6 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .filters import _file_matches
+from .links import is_link
 from .models import Entry, EntryType
 
 # How many entries the digest includes by default. ``ls`` is unbounded; ``brief``
@@ -128,6 +129,9 @@ def build_brief(
         A :class:`Brief` with ranked, truncated entries and digest metadata.
     """
     focus = [f for f in (focus or []) if f.strip()]
+    # Link records annotate other entries (they surface in `show`), so they never
+    # appear as standalone bullets in the digest.
+    entries = [e for e in entries if not is_link(e)]
     ranked = rank_entries(entries, focus)
     total = len(ranked)
     selected = ranked if budget <= 0 else ranked[:budget]

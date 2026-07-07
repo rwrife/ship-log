@@ -18,6 +18,7 @@ from rich.text import Text
 
 from .blame import BlameHit, BlameResult
 from .brief import Brief
+from .links import LinkView
 from .models import Entry, EntryType
 from .stats import Stats
 
@@ -27,6 +28,7 @@ _TYPE_STYLE: dict[str, str] = {
     EntryType.ATTEMPT.value: "yellow",
     EntryType.DEADEND.value: "bold red",
     EntryType.NOTE.value: "cyan",
+    EntryType.LINK.value: "blue",
 }
 
 
@@ -49,6 +51,26 @@ def _short_ts(ts: str) -> str:
 
 def _join(items: list[str], empty: str = "") -> str:
     return ", ".join(items) if items else empty
+
+
+_LINK_KIND_LABEL = {"commit": "commit", "pr": "PR", "ref": "ref"}
+
+
+def _links_grid(links: list[LinkView]) -> Table:
+    """Render resolved links as a compact newest-first list for ``show``."""
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column(justify="right", style="bold blue", no_wrap=True)
+    grid.add_column(overflow="fold")
+    for lv in links:
+        label = _LINK_KIND_LABEL.get(lv.kind, lv.kind or "link")
+        line = Text(lv.value or "", style="blue")
+        if lv.note:
+            line.append(f"  — {lv.note}", style="dim")
+        when = _short_ts(lv.ts)
+        if when:
+            line.append(f"   [{when}]", style="dim")
+        grid.add_row(f"{label}:", line)
+    return grid
 
 
 def entries_table(entries: list[Entry], *, title: str | None = None) -> Table:
@@ -82,8 +104,12 @@ def entries_table(entries: list[Entry], *, title: str | None = None) -> Table:
     return table
 
 
-def entry_panel(entry: Entry) -> Panel:
-    """Build a full-detail panel for a single entry (``show <id>``)."""
+def entry_panel(entry: Entry, *, links: list[LinkView] | None = None) -> Panel:
+    """Build a full-detail panel for a single entry (``show <id>``).
+
+    When ``links`` are supplied (follow-up ``link`` records pointing at this
+    entry), a **Links** section is appended below the fields, newest-first.
+    """
     body = Table.grid(padding=(0, 1))
     body.add_column(justify="right", style="bold")
     body.add_column(overflow="fold")
@@ -108,8 +134,17 @@ def entry_panel(entry: Entry) -> Panel:
     if entry.ref:
         row("ref", entry.ref)
 
+    content: object = body
+    if links:
+        content = Group(
+            body,
+            Text(""),
+            Text(f"Links ({len(links)})", style="bold blue"),
+            _links_grid(links),
+        )
+
     return Panel(
-        body,
+        content,
         title=f"⚓ {entry.id}",
         title_align="left",
         border_style=_TYPE_STYLE.get(entry.type.value, "white"),

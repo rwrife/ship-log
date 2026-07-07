@@ -37,6 +37,7 @@ class EntryType(StrEnum):
     ATTEMPT = "attempt"
     DEADEND = "deadend"
     NOTE = "note"
+    LINK = "link"
 
     @classmethod
     def coerce(cls, value: EntryType | str) -> EntryType:
@@ -103,6 +104,11 @@ class Entry:
         files: Paths this entry is about (for line/file anchoring later).
         tags: Free-form labels for filtering.
         ref: Linked issue/PR reference.
+        link_target: For ``link`` entries, the id of the entry this points back at
+            (empty on ordinary entries). A ``link`` entry never mutates its target;
+            it's an append-only follow-up fact ("this decision shipped in <sha>").
+        link_kind: For ``link`` entries, what kind of thing ``ref`` names --
+            ``commit`` / ``pr`` / ``ref`` (empty on ordinary entries).
         schema_version: On-disk format version (see :data:`SCHEMA_VERSION`).
     """
 
@@ -117,6 +123,8 @@ class Entry:
     files: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     ref: str = ""
+    link_target: str = ""
+    link_kind: str = ""
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:

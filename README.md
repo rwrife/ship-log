@@ -76,6 +76,30 @@ shiplog show 260621-K3 --json  # same, machine-readable object
 Filters are AND-combined and case-insensitive; `--json` on `ls`/`show` emits clean,
 ANSI-free output (array for `ls`, object for `show`) so agents parse instead of scrape.
 
+### Link it — attach a commit / PR / ref after the fact
+
+You log a decision **at decision-time**, before the commit exists. Later it lands
+in `abc1234` or PR #42. `shiplog link` closes that gap **without breaking
+append-only**: it appends a tiny `link` record pointing back at the original entry
+(the original line is never mutated), and `shiplog show` then surfaces the
+accumulated links.
+
+```bash
+# log the decision now (before the code exists)
+shiplog add decision "Switch the store to JSONL" --why "diffable, mergeable"
+
+# ...you write the code and ship it, then tie the record to what landed:
+shiplog link 260621-K3F9Q2 --commit abc1234
+shiplog link 260621-K3F9Q2 --pr "#42" --note "first cut"
+shiplog link 260621-K3F9Q2 --ref "https://tracker/PROJ-7"
+
+shiplog show 260621-K3F9Q2   # now renders a Links section (newest-first)
+```
+
+Exactly one of `--commit` / `--pr` / `--ref` is required. Link records don't
+clutter `ls`/`brief` as standalone rows (see them with `shiplog ls --type link`);
+`shiplog show <id> --json` includes a `links` array for agents.
+
 ### Brief it (M5) — the headline feature
 
 `shiplog brief` prints a compact, token-efficient digest to drop straight into an
@@ -334,6 +358,10 @@ printf '%s\n' \
   `NNNN-slug.md` per decision) or a grouped `changelog` digest, reusing the `ls`
   filters and deterministic (idempotent, safe to commit). ✅ See
   [Export](#export-it--durable-adr--changelog-markdown-for-humans).
+- **`shiplog link <id>`** — attach a commit / PR / ref to an existing entry after
+  the fact by appending a `link` record (append-only; never mutates the original),
+  surfaced as a Links section in `shiplog show` (+ `--json`). ✅ See
+  [Link it](#link-it--attach-a-commit--pr--ref-after-the-fact).
 
 ## License
 
