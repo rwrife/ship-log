@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Link records stay out of the default `ls` table and `brief` digest (reveal them
   with `shiplog ls --type link`). Reuses the existing flat schema — no
   `SCHEMA_VERSION` bump.
+- **Conflict-free merges** — `shiplog install-merge-driver` registers a git *union*
+  merge driver (a committed `.gitattributes` rule + a per-clone `.git/config` entry)
+  so concurrent branches appending to `.shiplog/log.jsonl` merge with **no conflict**:
+  git hands both sides to the driver, which takes their union, **dedupes by entry
+  `id`**, and **stable-sorts** (by `ts`, then `id`) → byte-identical output regardless
+  of merge order, no `<<<<<<<` markers. Idempotent; never clobbers a foreign
+  `.gitattributes`; `--status` / `--uninstall` supported. Plus **`shiplog fix`** to
+  repair logs mangled *before* the driver was installed: `--check` exits non-zero on
+  duplicates / out-of-order entries (CI guard), `--write` normalizes in place
+  (idempotent). `fix` only reorders and de-dupes — entry content is never changed,
+  `link` records are preserved, and unparseable lines are kept (pinned to the end).
 
 ## [0.1.0] — 2026-06-30
 

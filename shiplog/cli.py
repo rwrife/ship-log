@@ -16,6 +16,7 @@ from rich.console import Console
 
 from . import __version__, hooks
 from . import mcp as mcp_server
+from . import merge as merge_driver
 from .blame import blame as run_blame
 from .blame import blame_to_dict, parse_target
 from .brief import DEFAULT_BUDGET, brief_to_dict, build_brief
@@ -863,6 +864,99 @@ def blame(
 
 
 @app.command()
+def fix(
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Exit non-zero if the log has dupes or is out of order; write nothing (CI-friendly).",
+    ),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Rewrite the log in canonical form (dedupe by id + stable sort by ts,id).",
+    ),
+) -> None:
+    """Repair a mangled log: dedupe by id and stable-sort by (ts, id). Content-safe.
+
+    The manual companion to the union merge driver, for logs that got duplicated or
+    reordered *before* ``shiplog install-merge-driver`` was in place (e.g. a
+    hand-resolved append-region conflict). It only ever changes *ordering* and
+    removes exact ``id`` duplicates — an entry's content is never touched, and
+    ``link`` records (their own unique ids) are preserved.
+
+    Two modes:
+
+    * ``--check`` — read-only audit. Exits **1** if the log has duplicate ids or
+      isn't in canonical order (great in CI to catch a bad merge), **0** if it's
+      already clean. Writes nothing.
+    * ``--write`` — rewrite the log in canonical form. Idempotent: a clean log is
+      left byte-identical (no mtime churn).
+
+    With neither flag, does a dry run: reports what ``--write`` *would* change
+    without touching the file (so you can preview before committing to it).
+    """
+    if check and write:
+        _fail("pass only one of --check / --write (or neither for a dry run).")
+
+    store = _open_store_for_read()
+    # Read raw lines (not parsed entries) so malformed lines are preserved verbatim
+    # rather than exploding — corruption should be surfaced, not lost.
+    raw = store.path.read_text(encoding="utf-8") if store.path.exists() else ""
+    result = merge_driver.normalize_text(raw)
+
+    def _summary() -> str:
+        bits = []
+        if result.duplicates:
+            bits.append(
+                f"{result.duplicates} duplicate"
+                f"{'' if result.duplicates == 1 else 's'}"
+            )
+        if result.reordered:
+            bits.append("out-of-order entries")
+        if result.malformed:
+            bits.append(
+                f"{result.malformed} unparseable line"
+                f"{'' if result.malformed == 1 else 's'} (kept, pinned to end)"
+            )
+        return ", ".join(bits) if bits else "nothing to fix"
+
+    if check:
+        if result.is_clean:
+            console.print("⚓ log is clean: no duplicates, correctly ordered. ✅")
+            raise typer.Exit(0)
+        _fail(f"log needs normalizing: {_summary()}. Run [bold]shiplog fix --write[/bold].")
+
+    if not write:
+        # Dry run: report the diff-in-spirit without writing.
+        if result.is_clean:
+            console.print(
+                "⚓ log is already canonical — [bold]--write[/bold] would change nothing."
+            )
+        else:
+            console.print(
+                f"would normalize the log ({_summary()}). "
+                "Re-run with [bold]--write[/bold] to apply."
+            )
+        return
+
+    # --write path.
+    if result.is_clean:
+        console.print("⚓ log already canonical — [dim]unchanged[/dim].")
+        return
+    store.path.write_text(result.text, encoding="utf-8")
+    console.print(
+        f"⚓ normalized the log ([green]{_summary()}[/green]); "
+        f"{result.line_count} line{'' if result.line_count == 1 else 's'} written."
+    )
+    if result.malformed:
+        console.print(
+            "  ⚠️  some lines couldn't be parsed and were kept as-is at the end — "
+            "inspect them by hand.",
+            style="yellow",
+        )
+
+
+@app.command()
 def tui() -> None:
     """Open a full-screen, filterable browser of the log — the cozy way to explore.
 
@@ -1008,6 +1102,143 @@ def hook_nudge(
         # Belt-and-suspenders: nothing here may ever fail a commit.
         pass
     raise typer.Exit(0)
+
+
+# -- merge driver -------------------------------------------------------------
+
+
+@app.command(name="install-merge-driver")
+def install_merge_driver(
+    uninstall: bool = typer.Option(
+        False,
+        "--uninstall",
+        help="Remove the merge driver (strip .gitattributes block + git config).",
+    ),
+    show_status: bool = typer.Option(
+        False,
+        "--status",
+        help="Report whether the merge driver is installed; change nothing.",
+    ),
+) -> None:
+    """Register the union merge driver so ``.shiplog/log.jsonl`` never conflicts.
+
+    Two branches both appending to the log would otherwise hit a git append-region
+    conflict. This wires a git *merge driver* that instead takes the **union** of
+    both sides, dedupes by entry id, and stable-sorts — so merges are conflict-free
+    and both branches converge on byte-identical output. It writes two things:
+
+    * a committed ``.gitattributes`` rule (``.shiplog/log.jsonl merge=shiplog``) so
+      collaborators inherit the routing, and
+    * a per-clone ``.git/config`` entry defining the driver command.
+
+    Idempotent and safe (mirrors ``shiplog hook install``): a foreign
+    ``.gitattributes`` is never clobbered — only our fenced block is added/updated.
+    Each collaborator runs this once per clone (the ``.git/config`` half isn't
+    committed). Use ``--uninstall`` to remove it, ``--status`` to check.
+    """
+    if uninstall and show_status:
+        _fail("pass only one of --uninstall / --status.")
+
+    repo_root = _resolve_repo_root()
+
+    if show_status:
+        try:
+            st = merge_driver.status(repo_root)
+        except RuntimeError as exc:
+            _fail(str(exc))
+        if st.fully_installed:
+            console.print(
+                "⚓ shiplog merge driver: [green]installed[/green] (attributes + config)."
+            )
+        elif st.attr_installed or st.driver_configured:
+            # Half-installed: call it out — both halves are needed to actually route.
+            attr = "[green]yes[/green]" if st.attr_installed else "[yellow]no[/yellow]"
+            drv = "[green]yes[/green]" if st.driver_configured else "[yellow]no[/yellow]"
+            console.print(
+                f"shiplog merge driver: [yellow]partially installed[/yellow] "
+                f"(.gitattributes: {attr}, .git/config: {drv}). "
+                "Run [bold]shiplog install-merge-driver[/bold] to complete it."
+            )
+        else:
+            console.print(
+                "shiplog merge driver: [yellow]not installed[/yellow]. "
+                "Add it with [bold]shiplog install-merge-driver[/bold]."
+            )
+        return
+
+    if uninstall:
+        try:
+            un = merge_driver.uninstall(repo_root)
+        except RuntimeError as exc:
+            _fail(str(exc))
+        if un.attr_action == "absent" and un.config_action == "absent":
+            console.print(
+                "no shiplog merge driver installed here — nothing to remove.", style="dim"
+            )
+            return
+        rel = _rel_to_repo(un.attributes_file, repo_root)
+        if un.attr_action == "removed":
+            console.print(f"⚓ removed the merge driver ([bold]{rel}[/bold] deleted + git config).")
+        elif un.attr_action == "stripped":
+            console.print(
+                f"⚓ stripped the shiplog block from [bold]{rel}[/bold] "
+                "(your other attribute rules were kept) + removed the git config."
+            )
+        else:  # attr absent but config was present
+            console.print("⚓ removed the shiplog merge driver from [bold].git/config[/bold].")
+        return
+
+    # Default: install.
+    try:
+        result = merge_driver.install(repo_root)
+    except RuntimeError as exc:
+        _fail(str(exc))
+
+    rel = _rel_to_repo(result.attributes_file, repo_root)
+    if result.attr_action == "unchanged" and result.config_action == "unchanged":
+        console.print(
+            f"⚓ merge driver already installed ([bold]{rel}[/bold] + git config, up to date)."
+        )
+    else:
+        attr_verb = {
+            "created": "added the rule to",
+            "updated": "refreshed the rule in",
+            "unchanged": "rule already in",
+        }[result.attr_action]
+        cfg_verb = (
+            "configured the driver"
+            if result.config_action == "configured"
+            else "driver already configured"
+        )
+        console.print(
+            f"⚓ union merge driver ready: {attr_verb} [bold]{rel}[/bold], "
+            f"{cfg_verb} in git config."
+        )
+        console.print(
+            "  Commit [bold].gitattributes[/bold] so collaborators inherit it; each runs "
+            "[bold]shiplog install-merge-driver[/bold] once per clone. "
+            "Repair old logs with [bold]shiplog fix --write[/bold].",
+            style="dim",
+        )
+
+
+@app.command(name="_merge-driver", hidden=True)
+def _merge_driver(
+    ancestor: str = typer.Argument(..., help="Ancestor blob temp path (git %O)."),
+    current: str = typer.Argument(..., help="Current/ours blob temp path (git %A)."),
+    other: str = typer.Argument(..., help="Other/theirs blob temp path (git %B)."),
+    path: str = typer.Argument("", help="Merged file's repo path (git %P); informational."),
+) -> None:
+    """Internal: git merge driver entrypoint. Not for direct use.
+
+    Invoked by git as ``shiplog _merge-driver %O %A %B %P`` on a
+    ``.shiplog/log.jsonl`` conflict. Takes the union of ours + theirs, dedupes by
+    id, stable-sorts, and overwrites ``%A`` with the canonical bytes. Exits 0 (an
+    append-only union is always resolvable).
+    """
+    _ = path  # accepted for git's %P; the union doesn't need the path
+    code = merge_driver.run_merge_driver(current, other, ancestor)
+    raise typer.Exit(code)
 
 
 if __name__ == "__main__":  # pragma: no cover
