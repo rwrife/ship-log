@@ -255,6 +255,44 @@ typing, then **vanishes from the actual commit** — zero pollution, and it's im
 rewords). Installing never clobbers a pre-existing hook (use `--force` to overwrite), and
 uninstall removes only ship-log's block if you've added your own content alongside it.
 
+### Conflict-free merges (union merge driver)
+
+ship-log's whole premise is *many branches* (one per agent) each appending to
+`.shiplog/log.jsonl`. Left to git, two branches that both append lines hit a classic
+append-region **merge conflict**, and even a hand resolution can leave the log with
+duplicate or out-of-order entries. `shiplog install-merge-driver` makes merges
+**conflict-free by construction**:
+
+```bash
+shiplog install-merge-driver            # register the union merge driver in this clone
+shiplog install-merge-driver --status   # is it installed?
+shiplog install-merge-driver --uninstall # remove it (surgical + reversible)
+```
+
+It writes two things: a committed `.gitattributes` rule
+(`.shiplog/log.jsonl merge=shiplog`) so collaborators inherit the routing, and a
+per-clone `.git/config` entry defining the driver command. On a merge, git hands both
+sides to the driver, which takes their **union**, **dedupes by entry `id`**, and emits a
+**stable sort** (by timestamp, then id) — so both branches converge on **byte-identical**
+output regardless of merge order, with no `<<<<<<<` markers ever. It's idempotent and
+never clobbers a foreign `.gitattributes` (only its own fenced block). Commit
+`.gitattributes`; each collaborator runs `install-merge-driver` once per clone (the
+`.git/config` half isn't committed).
+
+**Already have a mangled log?** `shiplog fix` runs the same dedupe + stable-sort over the
+current log (for logs corrupted *before* the driver was installed):
+
+```bash
+shiplog fix --check   # exit 1 if the log has dupes / is out of order (CI-friendly); 0 if clean
+shiplog fix --write   # rewrite it in canonical form (idempotent; content never changed)
+shiplog fix           # dry run: report what --write would change, touch nothing
+```
+
+`fix` only ever changes *ordering* and removes exact `id` duplicates — an entry's content
+is never touched, `link` records are preserved, and any unparseable line is kept (pinned
+to the end) rather than dropped. Wire `shiplog fix --check` into CI to catch a bad merge
+before it lands.
+
 ## For agents
 
 The whole point: an agent runs `shiplog brief` **before** editing and `shiplog add`
@@ -362,6 +400,11 @@ printf '%s\n' \
   the fact by appending a `link` record (append-only; never mutates the original),
   surfaced as a Links section in `shiplog show` (+ `--json`). ✅ See
   [Link it](#link-it--attach-a-commit--pr--ref-after-the-fact).
+- **Conflict-free merges** — `shiplog install-merge-driver` registers a git union
+  merge driver (`.gitattributes` + `.git/config`) that dedupes by id and stable-sorts
+  so two branches' logs merge with no conflict and byte-identical output; `shiplog fix
+  --check/--write` repairs logs mangled before it was installed. ✅ See
+  [Conflict-free merges](#conflict-free-merges-union-merge-driver).
 
 ## License
 

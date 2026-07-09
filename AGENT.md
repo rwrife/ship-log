@@ -58,6 +58,10 @@ future agents) · `attempt` (in-progress exploration) · `note` (context worth k
   --commit <sha>` (or `--pr`/`--ref`) — it appends a linkage record without touching
   the original, and `shiplog show <id>` surfaces it.
 - **Reference issues/PRs** with `--ref` (e.g. `--ref '#42'`) when a decision ties to one.
+- **Keep merges clean.** Because many branches append to the same log, run `shiplog
+  install-merge-driver` once per clone so concurrent appends merge without conflict
+  (union + dedupe + stable sort). If a log ever looks duplicated/out-of-order, `shiplog
+  fix --write` repairs it (content-safe); `shiplog fix --check` is a CI guard.
 
 That's it: **`brief` in, `add` out.**
 
