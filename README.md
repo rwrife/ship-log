@@ -213,6 +213,8 @@ shiplog export adr --out docs/adr/            # one classic NNNN-slug.md per DEC
 shiplog export changelog                      # grouped digest (decisions + dead-ends) to stdout
 shiplog export changelog --out CHANGELOG.shiplog.md   # …or write it to a file
 shiplog export changelog --since 30d --tag release    # reuse the ls filters (--since/--type/--tag)
+shiplog export html                           # single self-contained shiplog.html viewer (for humans)
+shiplog export html --out - > public/log.html # …or stream it wherever you publish
 ```
 
 - **`adr`** → an [Architecture Decision Record](https://adr.github.io/) set: one
@@ -221,10 +223,53 @@ shiplog export changelog --since 30d --tag release    # reuse the ls filters (--
   the source entry id for traceability. `--out <dir>` is required.
 - **`changelog`** → a single markdown digest grouping decisions + dead-ends by date
   (newest first); prints to stdout, or `--out <file>` to write it.
+- **`html`** → a single **self-contained** `shiplog.html` (CSS + JS inlined — no CDN, no
+  build step, no framework; opens straight from `file://`). Renders every entry
+  newest-first with type badges, rationale, files, tags, refs, and branch/short-sha;
+  `link` records surface on their target entry, and **dead-ends are visually distinct**.
+  Ships an inlined **client-side filter** (text / type / tag / file) mirroring the
+  `ls`/TUI filters. Writes `shiplog.html` by default (`--out <file>`, or `--out -` for
+  stdout); `--title` sets the page heading. Perfect for publishing the log to GitHub
+  Pages so a PM or teammate can browse "why we abandoned approach X" as a URL — **no
+  network calls, no telemetry**.
 
 Output is **deterministic**: re-running with no new entries rewrites nothing
 (byte-identical, so committing the results is a clean no-op diff). An empty/filtered-to-
 nothing selection prints a friendly note and exits 0 without writing any partial files.
+
+#### Publish the HTML viewer to GitHub Pages (optional)
+
+Export on every push to `main` and publish the single file to Pages — the log becomes a
+shareable, linkable URL (enable Pages → "GitHub Actions" in repo settings first):
+
+```yaml
+# .github/workflows/shiplog-pages.yml
+name: Publish ship-log
+on:
+  push:
+    branches: [main]
+permissions:
+  pages: write
+  id-token: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx install ship-log && shiplog export html --out public/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+```
 
 ### Commit-time nudge (git hook)
 
@@ -392,9 +437,11 @@ printf '%s\n' \
 - **`shiplog stats`** — whole-log analytics: totals by type, dead-end ratio,
   recent activity (7d/30d + per-week sparkline), and top files/tags/authors, with
   `--since`/`--top`/`--json`. ✅ See [Stats](#stats--the-whole-log-health-read).
-- **`shiplog export`** — durable, human-facing markdown: an `adr` set (one
-  `NNNN-slug.md` per decision) or a grouped `changelog` digest, reusing the `ls`
-  filters and deterministic (idempotent, safe to commit). ✅ See
+- **`shiplog export`** — durable, human-facing artifacts: an `adr` set (one
+  `NNNN-slug.md` per decision), a grouped `changelog` digest, or a single
+  self-contained `html` viewer (inlined CSS/JS, client-side filter, dead-ends
+  distinct — publish it to GitHub Pages), reusing the `ls` filters and
+  deterministic (idempotent, safe to commit). ✅ See
   [Export](#export-it--durable-adr--changelog-markdown-for-humans).
 - **`shiplog link <id>`** — attach a commit / PR / ref to an existing entry after
   the fact by appending a `link` record (append-only; never mutates the original),
