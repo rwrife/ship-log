@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`shiplog export html`** — render the log to a single **self-contained**
+  `shiplog.html` viewer (CSS + JS inlined, no CDN, no build step, no framework) so
+  a human teammate can browse a repo's decision history without installing the CLI
+  — e.g. published to GitHub Pages. Renders every entry **newest-first** with type
+  badges, rationale, files, tags, refs, branch/short-sha, and surfaces `link`
+  records on their target entry; **dead-ends are visually distinct** (the headline
+  value: "already tried, don't repeat"). Includes an inlined **client-side filter**
+  (text / type / tag / file, vanilla JS) mirroring the `ls`/TUI filters, and works
+  offline from `file://`. Reuses the `ls` filters (`--since`/`--type`/`--tag`);
+  `--title` sets the page heading; `--out -` streams to stdout. Output is
+  **deterministic** (no generation-time stamps) so re-exports are byte-identical.
+  No network calls, no telemetry. README documents an optional GitHub Actions
+  snippet to publish it to Pages on push to `main`.
 - **`shiplog link <id>`** — attach a commit / PR / ref to an existing entry *after
   the fact*. Appends a tiny `link` record pointing back at the target (append-only;
   the original entry line is never mutated), so a decision logged before the code

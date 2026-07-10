@@ -29,8 +29,10 @@ from .config import (
 from .export import (
     ADR,
     FORMATS,
+    HTML,
     build_adr_set,
     render_changelog,
+    render_html,
 )
 from .filters import filter_entries, parse_since, sort_newest_first
 from .gitctx import GitContext, working_tree_files
@@ -648,6 +650,7 @@ def _filtered_for_export(
     type_: str,
     tag: str,
     since: str,
+    keep_links: bool = False,
 ) -> list[Entry]:
     """Read + filter entries for ``export`` using the shared filter helpers.
 
@@ -656,6 +659,13 @@ def _filtered_for_export(
     in **append order** (chronological) — export ordering (ADR numbering,
     changelog date grouping) depends on that, so we deliberately do *not*
     newest-first sort here.
+
+    ``keep_links``: the HTML viewer surfaces ``link`` records *on their target
+    entry*, so a ``--type`` filter (e.g. ``decision``) must not silently drop the
+    links that annotate the surviving entries. When set, link records bypass the
+    ``--type`` filter but still honor ``--tag``/``--since`` and are re-merged in
+    append order; :func:`shiplog.export.render_html` only renders a link when its
+    target survived, so orphaned links simply do not show.
     """
     since_dt = None
     if since.strip():
@@ -671,12 +681,31 @@ def _filtered_for_export(
         except ValueError as exc:
             _fail(str(exc))
 
-    return filter_entries(
-        store.read_all(),
+    all_entries = store.read_all()
+    filtered = filter_entries(
+        all_entries,
         type_=type_q or None,
         tag=tag or None,
         since=since_dt,
     )
+
+    if not keep_links or not type_q:
+        # No type filter (or caller does not need links preserved): pass through.
+        return filtered
+
+    # A ``--type`` filter was applied and the caller wants links preserved. Re-add
+    # any link records the type filter removed, in append order, so they can attach
+    # to whichever primary entries survived. ``--tag``/``--since`` still apply.
+    kept = {id(e) for e in filtered}
+    links_only = filter_entries(
+        [e for e in all_entries if e.type == EntryType.LINK],
+        tag=tag or None,
+        since=since_dt,
+    )
+    merged = list(filtered) + [e for e in links_only if id(e) not in kept]
+    order = {id(e): i for i, e in enumerate(all_entries)}
+    merged.sort(key=lambda e: order.get(id(e), 0))
+    return merged
 
 
 def _write_if_changed(path: Path, content: str) -> bool:
@@ -698,7 +727,7 @@ def export(
     fmt: str = typer.Argument(
         ...,
         metavar="FORMAT",
-        help="What to render: 'adr' (one file per decision) or 'changelog' (one digest).",
+        help="What to render: 'adr' (file per decision), 'changelog' (digest), or 'html' (viewer).",
     ),
     out: str = typer.Option(
         "",
@@ -706,7 +735,8 @@ def export(
         "-o",
         help=(
             "Output path. adr: a directory (one NNNN-slug.md per decision). "
-            "changelog: a file (omit to print to stdout)."
+            "changelog: a file (omit to print to stdout). "
+            "html: a file (default shiplog.html; '-' prints to stdout)."
         ),
     ),
     since: str = typer.Option(
@@ -725,8 +755,13 @@ def export(
         "--tag",
         help="Only entries carrying this tag.",
     ),
+    title: str = typer.Option(
+        "ship-log",
+        "--title",
+        help="html only: page <title>/heading for the generated viewer.",
+    ),
 ) -> None:
-    """Render the log to durable, human-facing markdown (ADR set or CHANGELOG).
+    """Render the log to durable, human-facing artifacts (ADR / CHANGELOG / HTML).
 
     Unlike ``brief`` (ephemeral, agent-facing), ``export`` writes persistent files
     you commit and ship at milestones:
@@ -737,6 +772,10 @@ def export(
     * ``shiplog export changelog --out CHANGELOG.shiplog.md`` (or stdout if
       ``--out`` is omitted) — a single digest grouping decisions + dead-ends by
       date.
+    * ``shiplog export html`` — a single self-contained ``shiplog.html`` viewer
+      (CSS + JS inlined, no CDN) with type badges and a client-side filter box,
+      ideal for publishing the log to GitHub Pages so humans can browse it without
+      installing the CLI. ``--out -`` prints the HTML to stdout.
 
     Reuses the ``ls`` filters (``--since``/``--type``/``--tag``). Output is
     deterministic: re-running with no new entries rewrites nothing (byte-identical,
@@ -750,10 +789,16 @@ def export(
         )
 
     store = _open_store_for_read()
-    entries = _filtered_for_export(store, type_=type_, tag=tag, since=since)
+    # HTML surfaces link records on their target entries, so keep links even when
+    # a --type filter is applied (they only render if their target survives).
+    entries = _filtered_for_export(
+        store, type_=type_, tag=tag, since=since, keep_links=(fmt_norm == HTML)
+    )
 
     if fmt_norm == ADR:
         _export_adr(entries, out)
+    elif fmt_norm == HTML:
+        _export_html(entries, out, title=title)
     else:  # CHANGELOG
         _export_changelog(entries, out)
 
@@ -806,6 +851,38 @@ def _export_changelog(entries: list[Entry], out: str) -> None:
     state = "[green]written[/green]" if changed else "[dim]unchanged[/dim]"
     console.print(
         f"\u2693 exported changelog to [bold]{out_path.as_posix()}[/bold] ({state})."
+    )
+
+
+# Default filename for the HTML viewer when ``--out`` is omitted. A file (not
+# stdout) is the sensible default here: the artifact is meant to be committed /
+# published (e.g. to GitHub Pages), unlike the changelog which often pipes.
+_DEFAULT_HTML_OUT = "shiplog.html"
+
+
+def _export_html(entries: list[Entry], out: str, *, title: str) -> None:
+    """Render the self-contained HTML viewer to a file (or stdout on ``--out -``).
+
+    Unlike changelog, html defaults to writing a file (:data:`_DEFAULT_HTML_OUT`)
+    since the viewer is a publishable artifact; pass ``--out -`` to stream it to
+    stdout instead. Output is deterministic, so a re-export with no new entries is
+    byte-identical and rewrites nothing.
+    """
+    document = render_html(entries, title=title)
+
+    if out.strip() == "-":
+        # Explicit stdout: print verbatim (no Rich markup) so redirects stay clean.
+        print(document, end="")
+        return
+
+    out_path = Path(out.strip() or _DEFAULT_HTML_OUT)
+    changed = _write_if_changed(out_path, document)
+    state = "[green]written[/green]" if changed else "[dim]unchanged[/dim]"
+    count = sum(1 for e in entries if e.type != EntryType.LINK)
+    console.print(
+        f"\u2693 exported HTML viewer ([bold]{count}[/bold] "
+        f"entr{'y' if count == 1 else 'ies'}) to "
+        f"[bold]{out_path.as_posix()}[/bold] ({state})."
     )
 
 
