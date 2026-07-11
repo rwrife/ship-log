@@ -485,7 +485,7 @@ border:1px solid rgba(88,166,255,.3);border-radius:999px;padding:1px 8px}
 # Inlined behaviour -- pure vanilla JS, no framework. Reads the pre-rendered rows
 # and toggles ``.hidden`` based on the four filters. Everything degrades to a fully
 # readable static page when JS is off (rows start visible; this only ever hides).
-_HTML_JS = """\
+_HTML_JS = r"""
 (function(){
   var q=document.getElementById('q'),ty=document.getElementById('ty'),
       tg=document.getElementById('tg'),fl=document.getElementById('fl'),
