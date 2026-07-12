@@ -50,6 +50,8 @@ from .render import (
 from .stats import DEFAULT_TOP_N, compute_stats, stats_to_dict
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
 from .tui import run_tui
+from .verify import Severity
+from .verify import verify as run_verify
 
 app = typer.Typer(
     name="shiplog",
@@ -643,6 +645,67 @@ def stats(
         return
 
     console.print(stats_render(summary))
+
+
+@app.command()
+def verify(
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Also fail on warnings (currently: non-monotonic timestamps).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured findings (line, id, code) for agents/CI.",
+    ),
+) -> None:
+    """Validate log integrity — a fast, read-only CI gate against corruption.
+
+    Walks every line of ``.shiplog/log.jsonl`` and flags: unparseable JSON,
+    non-object lines, missing required fields, unknown ``type``, duplicate ``id``,
+    a ``schema_version`` this CLI can't read, and dangling ``link``/``ack``/``fix``
+    references. With ``--strict`` it additionally warns on non-monotonic ``ts``.
+
+    Complements the merge driver (which unions/dedupes) by *catching* a bad append
+    instead of masking it. Exit **0** when clean, **1** on any error (or any
+    warning under ``--strict``); ``--json`` emits a stable object of findings.
+    """
+    store = _open_store_for_read()
+    report = run_verify(store, strict=strict)
+
+    if as_json:
+        console.print_json(json.dumps(report.to_dict(), ensure_ascii=False))
+        raise typer.Exit(0 if report.ok else 1)
+
+    if not report.findings:
+        console.print(
+            f"⚓ log clean — [green]{report.checked}[/green] entr"
+            f"{'y' if report.checked == 1 else 'ies'} checked, no problems found."
+        )
+        raise typer.Exit(0)
+
+    for f in report.findings:
+        colour = "red" if f.severity == Severity.ERROR else "yellow"
+        tag = f.severity.value.upper()
+        loc = f"line {f.line}"
+        if f.id:
+            loc += f" ({f.id})"
+        console.print(
+            f"[bold {colour}]{tag}[/bold {colour}] {loc} [dim]{f.code.value}[/dim]: {f.message}"
+        )
+
+    n_err = len(report.errors)
+    n_warn = len(report.warnings)
+    summary = f"{n_err} error{'s' if n_err != 1 else ''}"
+    if n_warn:
+        summary += f", {n_warn} warning{'s' if n_warn != 1 else ''}"
+    verdict = "green]pass" if report.ok else "red]FAIL"
+    console.print(
+        f"\n{report.checked} checked — {summary}. Result: [bold {verdict}[/bold "
+        f"{'green' if report.ok else 'red'}]."
+    )
+    raise typer.Exit(0 if report.ok else 1)
 
 
 def _filtered_for_export(
