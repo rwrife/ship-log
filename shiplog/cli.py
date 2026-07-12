@@ -15,6 +15,7 @@ import typer
 from rich.console import Console
 
 from . import __version__, hooks
+from . import guard as guard_hook
 from . import mcp as mcp_server
 from . import merge as merge_driver
 from .blame import blame as run_blame
@@ -1179,6 +1180,246 @@ def hook_nudge(
         # Belt-and-suspenders: nothing here may ever fail a commit.
         pass
     raise typer.Exit(0)
+
+
+# -- guard subcommands (enforcing pre-commit dead-end tripwire) ----------------
+
+guard_app = typer.Typer(
+    name="guard",
+    help="Enforcing pre-commit tripwire: block commits that re-touch open dead-ends.",
+    invoke_without_command=True,
+    add_completion=False,
+)
+app.add_typer(guard_app)
+
+
+@guard_app.callback(invoke_without_command=True)
+def guard_main(
+    ctx: typer.Context,
+    ack: str = typer.Option(
+        "",
+        "--ack",
+        help="Acknowledge a dead-end by id (or unique prefix); it stops blocking.",
+    ),
+    note: str = typer.Option(
+        "",
+        "--note",
+        "-m",
+        help="Optional note recorded with the acknowledgement.",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="With no subcommand: emit the blocking dead-ends as JSON (for agents).",
+    ),
+) -> None:
+    """Manage / run the enforcing dead-end guard.
+
+    With a subcommand (``install`` / ``uninstall`` / ``status``) this manages the
+    ``pre-commit`` hook. With ``--ack <id>`` it records an acknowledgement that
+    clears one dead-end. With no subcommand and no ``--ack`` it *reports* the
+    dead-ends that would block a commit of your currently staged files (exit 0
+    here — the actual blocking happens in the ``_check`` hook entrypoint).
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    if ack.strip():
+        _guard_ack(ack.strip(), note.strip())
+        return
+
+    # No subcommand, no --ack: report current blocks for the staged set.
+    repo_root = _resolve_repo_root()
+    store = Store.for_repo(repo_root)
+    if not store.exists():
+        _fail('no ship-log here yet. Run [bold]shiplog init[/bold] first.')
+    entries = store.read_all()
+    touched = set(guard_hook.staged_files(repo_root))
+    blocks = guard_hook.blocking_deadends(entries, touched)
+
+    if as_json:
+        payload = {"blocking": [b.to_dict() for b in blocks], "count": len(blocks)}
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+        return
+
+    if not blocks:
+        console.print(
+            "⚓ guard: [green]clear[/green] — no open dead-ends touch your staged files."
+        )
+        return
+    _print_blocks(blocks)
+
+
+def _print_blocks(blocks: list[guard_hook.Block]) -> None:
+    """Render blocking dead-ends to stderr in a human-friendly, actionable form."""
+    n = len(blocks)
+    err_console.print(
+        f"[bold red]\u2693 guard: {n} open dead-end{'' if n == 1 else 's'} "
+        f"block this commit:[/bold red]"
+    )
+    for b in blocks:
+        err_console.print(
+            f"  [bold]{b.entry.id}[/bold] — {b.entry.summary}"
+        )
+        if b.entry.why:
+            err_console.print(f"      why: {b.entry.why}", style="dim")
+        err_console.print(f"      files: {', '.join(b.files)}", style="dim")
+    err_console.print(
+        "  Acknowledge with [bold]shiplog guard --ack <id>[/bold], "
+        "or override once with [bold]SHIPLOG_GUARD=off[/bold] "
+        "(or git commit --no-verify).",
+        style="dim",
+    )
+
+
+def _guard_ack(entry_id: str, note: str) -> None:
+    """Record an ``ack`` entry that clears the dead-end named by ``entry_id``."""
+    store = _open_store_for_read()
+    entries = store.read_all()
+    try:
+        target = _find_by_id(entries, entry_id)
+    except LookupError as exc:
+        _fail(str(exc))
+    if target is None:
+        _fail(
+            f"no entry with id {entry_id!r} to acknowledge. "
+            "Try [bold]shiplog ls --type deadend[/bold] to find one."
+        )
+    if target.type != EntryType.DEADEND:
+        _fail(
+            f"{target.id} is a [bold]{target.type.value}[/bold], not a dead-end. "
+            "Only dead-ends can be acknowledged."
+        )
+
+    gctx = GitContext.capture()
+    config = Config.load(gctx.repo_root) if gctx.repo_root is not None else None
+    author = (config.author if config else "") or gctx.author
+
+    ack_entry = Entry(
+        summary=f"ack dead-end {target.id}: {target.summary}",
+        type=EntryType.ACK,
+        author=author,
+        branch=gctx.branch,
+        sha=gctx.sha,
+        why=note,
+        link_target=target.id,
+    )
+    store.append(ack_entry)
+    console.print(
+        f"\u2693 acknowledged dead-end [dim]{target.id}[/dim] — "
+        "it will no longer block commits."
+    )
+    if note:
+        console.print(f"  note: {note}", style="dim")
+
+
+@guard_app.command("install")
+def guard_install(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Append the guard block to a pre-existing, non-ship-log pre-commit hook.",
+    ),
+) -> None:
+    """Install the enforcing pre-commit guard hook in this repo.
+
+    The hook blocks a commit whose staged files overlap any open (un-acknowledged)
+    dead-end. Idempotent; won't clobber a foreign pre-commit hook unless
+    ``--force`` (which appends our block, keeping yours). Override any single
+    commit with ``SHIPLOG_GUARD=off`` or ``git commit --no-verify``.
+    """
+    repo_root = _resolve_repo_root()
+    try:
+        result = guard_hook.install(repo_root, force=force)
+    except FileExistsError as exc:
+        _fail(str(exc))
+    except RuntimeError as exc:
+        _fail(str(exc))
+
+    rel = _rel_to_repo(result.hook_file, repo_root)
+    if result.action == "unchanged":
+        console.print(f"\u2693 guard already installed at [bold]{rel}[/bold] (up to date).")
+    else:
+        verb = "installed" if result.action == "created" else "updated"
+        console.print(f"\u2693 pre-commit guard [green]{verb}[/green] at [bold]{rel}[/bold].")
+        console.print(
+            "  It'll [bold]block[/bold] commits that re-touch an open dead-end. "
+            "Clear one with [bold]shiplog guard --ack <id>[/bold]; "
+            "remove with [bold]shiplog guard uninstall[/bold].",
+            style="dim",
+        )
+
+
+@guard_app.command("uninstall")
+def guard_uninstall() -> None:
+    """Remove the guard hook (surgical + reversible).
+
+    Deletes the hook if it's purely ours, or strips just our block if you've added
+    your own pre-commit content alongside it. Leaves foreign hooks untouched.
+    """
+    repo_root = _resolve_repo_root()
+    try:
+        result = guard_hook.uninstall(repo_root)
+    except RuntimeError as exc:
+        _fail(str(exc))
+
+    rel = _rel_to_repo(result.hook_file, repo_root)
+    if result.action == "absent":
+        console.print("no ship-log guard installed here \u2014 nothing to remove.", style="dim")
+    elif result.action == "removed":
+        console.print(f"\u2693 removed the guard hook ([bold]{rel}[/bold]).")
+    else:  # stripped
+        console.print(
+            f"\u2693 stripped the guard block from [bold]{rel}[/bold] "
+            "(your other pre-commit content was kept)."
+        )
+
+
+@guard_app.command("status")
+def guard_status() -> None:
+    """Report whether the enforcing guard hook is installed in this repo."""
+    repo_root = _resolve_repo_root()
+    if guard_hook.status(repo_root):
+        console.print("\u2693 ship-log guard: [green]installed[/green].")
+    else:
+        console.print(
+            "ship-log guard: [yellow]not installed[/yellow]. "
+            "Add it with [bold]shiplog guard install[/bold]."
+        )
+
+
+@guard_app.command("_check", hidden=True)
+def guard_check() -> None:
+    """Internal: invoked by the installed pre-commit hook. Not for direct use.
+
+    Scans the staged files against open dead-ends and exits non-zero (2) when any
+    block, printing an actionable report to stderr. Exits 0 when clear, when the
+    log is absent/uninitialized, or when the env override is set. Any unexpected
+    error degrades to exit 0 so the guard can never wedge a repo.
+    """
+    if guard_hook.guard_disabled_via_env():
+        raise typer.Exit(0)
+    try:
+        gctx = GitContext.capture()
+        if gctx.repo_root is None:
+            raise typer.Exit(0)
+        store = Store.for_repo(gctx.repo_root)
+        if not store.exists():
+            raise typer.Exit(0)
+        entries = store.read_all()
+        touched = set(guard_hook.staged_files(gctx.repo_root))
+        blocks = guard_hook.blocking_deadends(entries, touched)
+    except typer.Exit:
+        raise
+    except Exception:
+        # Never wedge a commit on an internal error.
+        raise typer.Exit(0) from None
+
+    if not blocks:
+        raise typer.Exit(0)
+    _print_blocks(blocks)
+    raise typer.Exit(2)
 
 
 # -- merge driver -------------------------------------------------------------

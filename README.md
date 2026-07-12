@@ -300,6 +300,46 @@ typing, then **vanishes from the actual commit** — zero pollution, and it's im
 rewords). Installing never clobbers a pre-existing hook (use `--force` to overwrite), and
 uninstall removes only ship-log's block if you've added your own content alongside it.
 
+### Dead-end guard (enforcing pre-commit tripwire)
+
+The nudge only *reminds* — and agents ignore reminders. `shiplog guard` is the opt-in
+**seatbelt**: a `pre-commit` hook that scans your staged diff, finds any open `deadend`
+entry whose `--files` overlap the files you're about to commit, and **fails the commit**.
+Institutional memory goes from passive warning to a real gate.
+
+```bash
+shiplog guard install      # add the enforcing pre-commit hook to this repo
+shiplog guard status       # is it installed?
+shiplog guard uninstall    # remove it (surgical + reversible)
+shiplog guard --json       # report what would block your currently staged files
+```
+
+When a staged file overlaps an open dead-end, the commit is blocked with an actionable
+message:
+
+```text
+⚓ guard: 1 open dead-end blocks this commit:
+  260710-A1B2C3 — switched to asyncpg, deadlocked under load
+      why: pool starvation under concurrent writes
+      files: db.py
+  Acknowledge with shiplog guard --ack <id>, or override once with
+  SHIPLOG_GUARD=off (or git commit --no-verify).
+```
+
+Two escape hatches:
+
+- **Acknowledge** a specific dead-end once you've made peace with it:
+  `shiplog guard --ack <id>` (optionally `--note "..."`). This appends an append-only
+  `ack` entry pointing back at the dead-end — the original line is never mutated — and
+  that dead-end stops blocking future commits.
+- **Override** the whole gate for a single commit: `SHIPLOG_GUARD=off git commit`
+  (any of `off`/`0`/`false`/`no`/`skip`), or git's own `--no-verify`.
+
+Dead-ends with **no recorded files** never block (too blunt to gate on). Installing never
+clobbers a pre-existing `pre-commit` hook (use `--force` to append the guard block after
+yours); uninstall strips only ship-log's block. A missing `shiplog` on `PATH` or any
+internal error degrades to *allow* — the guard can never wedge a repo.
+
 ### Conflict-free merges (union merge driver)
 
 ship-log's whole premise is *many branches* (one per agent) each appending to

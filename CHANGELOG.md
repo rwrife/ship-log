@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`shiplog guard`** — an opt-in **enforcing** `pre-commit` tripwire that turns
+  dead-ends from passive warnings into a real gate. `shiplog guard install`
+  wires a `pre-commit` hook that scans the staged diff and **fails the commit**
+  when any staged file overlaps an open (un-acknowledged) `deadend` entry's
+  `--files`, printing an actionable report (id, summary, why, overlapping files).
+  Clear a specific one with `shiplog guard --ack <id>` (appends an append-only
+  `ack` record pointing back at the dead-end; the original line is never mutated),
+  or override a single commit with `SHIPLOG_GUARD=off` (`off`/`0`/`false`/`no`/`skip`)
+  or git's `--no-verify`. `shiplog guard --json` reports what would block the
+  currently staged files for agent parsing; `status`/`uninstall` mirror the nudge
+  hook (surgical, reversible, never clobbers a foreign hook without `--force`).
+  File-less dead-ends never block, and a missing `shiplog`/internal error degrades
+  to *allow* so the guard can never wedge a repo.
 - **`shiplog export html`** — render the log to a single **self-contained**
   `shiplog.html` viewer (CSS + JS inlined, no CDN, no build step, no framework) so
   a human teammate can browse a repo's decision history without installing the CLI

@@ -38,6 +38,7 @@ class EntryType(StrEnum):
     DEADEND = "deadend"
     NOTE = "note"
     LINK = "link"
+    ACK = "ack"
 
     @classmethod
     def coerce(cls, value: EntryType | str) -> EntryType:
