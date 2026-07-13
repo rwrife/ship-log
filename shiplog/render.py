@@ -16,6 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .ask import AskResult
 from .blame import BlameHit, BlameResult
 from .brief import Brief
 from .links import LinkView
@@ -477,3 +478,51 @@ def stats_render(stats: Stats) -> Group:
         Text(""),
         tops,
     )
+
+
+def _ask_hit_panel(hit, rank: int, *, headline: bool) -> Panel:
+    """Render one search hit as a compact panel (headline = top match)."""
+    e = hit.entry
+    body = Table.grid(padding=(0, 1))
+    body.add_column(justify="right", style="bold", no_wrap=True)
+    body.add_column(overflow="fold")
+    body.add_row("type:", type_text(e.type.value))
+    body.add_row("summary:", Text(e.summary))
+    if e.why:
+        body.add_row("why:", Text(e.why))
+    if e.files:
+        body.add_row("files:", Text(_join(e.files), style="cyan"))
+    if e.tags:
+        body.add_row("tags:", Text(_join(e.tags), style="magenta"))
+    meta = " ".join(p for p in (e.branch, e.sha) if p)
+    body.add_row("when:", Text(f"{_short_ts(e.ts)}  {meta}".strip(), style="dim"))
+    body.add_row("id:", Text(e.id, style="dim"))
+    title = Text(f"#{rank}  ", style="bold")
+    title.append(f"score {hit.score:.2f}", style="green" if headline else "dim")
+    return Panel(
+        body,
+        title=title,
+        title_align="left",
+        border_style="green" if headline else "dim",
+        expand=False,
+    )
+
+
+def ask_render(result: AskResult) -> Group:
+    """Render an :class:`~shiplog.ask.AskResult`: verdict line, then ranked hits."""
+    verdict = Text(result.verdict(), style="bold")
+    if result.total_matches == 0:
+        return Group(verdict)
+    parts = [verdict, Text("")]
+    for i, hit in enumerate(result.hits, start=1):
+        parts.append(_ask_hit_panel(hit, i, headline=(i == 1)))
+    if result.truncated:
+        parts.append(
+            Text(
+                f"… +{result.truncated} more match"
+                f"{'es' if result.truncated != 1 else ''} "
+                "(raise --limit to see them).",
+                style="dim italic",
+            )
+        )
+    return Group(*parts)

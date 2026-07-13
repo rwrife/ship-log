@@ -45,7 +45,7 @@ shiplog hello                  # friendly banner; proof the install works
 
 ## Quickstart
 
-`init`, `add`, `ls`, `show`, and `brief` all work today (through M5).
+`init`, `add`, `ls`, `show`, `brief`, and `ask` all work today (through M5).
 
 ```bash
 shiplog init                   # creates .shiplog/log.jsonl + .shiplog/config.toml (idempotent)
@@ -129,6 +129,26 @@ _focus: shiplog/store.py · 2 dead-ends · 5 of 5 entries_
 The digest is ranked *before* the size budget is applied, so truncation always drops
 the least-relevant tail — never a dead-end in favor of an old note. Output is plain
 markdown (verbatim, no ANSI) so it's clean when piped into a prompt.
+
+### Ask it a question — `ask`
+
+Where `brief` gives a *fixed* digest, `shiplog ask` answers a *specific* question an
+agent has right now — "have we tried Redis for the cache layer?" — by lexically
+ranking matching entries, dead-ends boosted, with a one-line verdict up top for fast
+parsing. It's pure local BM25-ish scoring: **zero deps, no LLM, no network**, so it
+works offline and in CI.
+
+```bash
+shiplog ask "have we tried redis for caching?"   # ranked matches, dead-ends first
+shiplog ask "cache layer" --type deadend         # narrow to a type
+shiplog ask "auth" --file cli.py --since 30d      # same --file/--since parser as ls
+shiplog ask "redis" --limit 3                     # cap the hits (default 5; 0 = no cap)
+shiplog ask "redis cache" --json                  # {verdict, hits[{score,entry}], deadends, ...}
+```
+
+The first line is a verdict an agent can branch on — e.g. `Yes — 2 dead-ends, 1
+decision match.` or `No matches for 'kubernetes helm' — nothing logged about this
+yet.` `--json` returns scored, ranked hits so a caller can threshold or re-rank.
 
 ### Browse it (TUI) — the cozy full-screen view
 

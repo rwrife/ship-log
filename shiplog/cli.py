@@ -18,6 +18,7 @@ from . import __version__, hooks
 from . import guard as guard_hook
 from . import mcp as mcp_server
 from . import merge as merge_driver
+from .ask import ask_to_dict, build_ask
 from .blame import blame as run_blame
 from .blame import blame_to_dict, parse_target
 from .brief import DEFAULT_BUDGET, brief_to_dict, build_brief
@@ -40,6 +41,7 @@ from .gitctx import GitContext, working_tree_files
 from .links import links_for, make_link_summary, split_links
 from .models import Entry, EntryType
 from .render import (
+    ask_render,
     blame_render,
     brief_markdown,
     empty_note,
@@ -590,6 +592,82 @@ def brief(
     # Print the markdown verbatim (no Rich markup interpretation) so it's exactly
     # what lands in a prompt -- and clean when piped/redirected.
     print(brief_markdown(digest))
+
+
+DEFAULT_ASK_LIMIT = 5
+
+
+@app.command()
+def ask(
+    question: str = typer.Argument(
+        ...,
+        metavar="QUESTION",
+        help='The question to search the log for, e.g. "have we tried Redis?".',
+    ),
+    type_: str = typer.Option(
+        "",
+        "--type",
+        "-t",
+        help="Only search entries of this type (decision, attempt, deadend, note).",
+    ),
+    file: str = typer.Option(
+        "",
+        "--file",
+        help="Only search entries referencing this path (suffix match, e.g. cli.py).",
+    ),
+    since: str = typer.Option(
+        "",
+        "--since",
+        help="Only search entries at/after a time: relative (7d, 24h) or ISO date.",
+    ),
+    limit: int = typer.Option(
+        DEFAULT_ASK_LIMIT,
+        "--limit",
+        "-n",
+        help=f"Max matches to return (default {DEFAULT_ASK_LIMIT}; 0 = no cap).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a JSON object (verdict + scored, ranked hits) instead of text.",
+    ),
+) -> None:
+    """Answer a specific question by lexically ranking matching log entries.
+
+    Unlike ``brief`` (a fixed digest), ``ask`` retrieves the entries most relevant
+    to *this* question -- pure local BM25-ish scoring, no LLM or network -- with
+    dead-ends boosted and a one-line verdict ('Yes -- 2 dead-ends, 1 decision')
+    for fast agent parsing. ``--type``/``--file``/``--since`` narrow the corpus;
+    ``--json`` emits a stable, scored object.
+    """
+    if type_.strip():
+        try:
+            type_ = EntryType.coerce(type_).value
+        except ValueError as exc:
+            _fail(str(exc))
+
+    since_dt = None
+    if since.strip():
+        try:
+            since_dt = parse_since(since)
+        except ValueError as exc:
+            _fail(str(exc))
+
+    store = _open_store_for_read()
+    source, _links = split_links(store.read_all())
+    entries = filter_entries(
+        source,
+        type_=type_,
+        file=file,
+        since=since_dt,
+    )
+    result = build_ask(entries, question, limit=limit)
+
+    if as_json:
+        console.print_json(json.dumps(ask_to_dict(result), ensure_ascii=False))
+        return
+
+    console.print(ask_render(result))
 
 
 @app.command()
