@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`shiplog verify`** — a fast, **read-only** integrity & schema linter that
+  gives CI a clean exit code so a bad append can't silently ship. Walks every
+  line of `.shiplog/log.jsonl` and flags malformed JSON, non-object lines,
+  missing required fields, unknown `type`, duplicate `id`, a `schema_version`
+  newer than the CLI supports, and dangling `link`/`ack`/`fix` references.
+  Exit **0** when clean, **1** on any error; `--strict` additionally fails on
+  warnings (non-monotonic `ts`), and `--json` emits structured findings
+  (`line`, `id`, `code`, `severity`, `message`) for agents/CI. Complements the
+  merge driver by *catching* corruption instead of masking it.
 - **`shiplog guard`** — an opt-in **enforcing** `pre-commit` tripwire that turns
   dead-ends from passive warnings into a real gate. `shiplog guard install`
   wires a `pre-commit` hook that scans the staged diff and **fails the commit**

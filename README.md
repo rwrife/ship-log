@@ -202,6 +202,33 @@ first), `top_files` / `top_tags` / `top_authors` (`[{name, count}, …]`, highes
 the `first_ts`/`last_ts` span. An empty log prints a friendly "no entries yet" line and
 exits 0.
 
+### Verify it — a CI gate against log rot
+
+Agents append autonomously, and an append-only file can rot: a malformed JSON line, a
+missing field, an unknown `type`, a duplicate `id`, a dangling `link`/`ack` target, or a
+`schema_version` an older CLI can't read. `shiplog verify` is a fast, **read-only**
+validator that returns a clean exit code so a bad append can't silently ship. It
+complements the [merge driver](#conflict-free-merges-union-merge-driver) (which
+unions/dedupes) by *catching* corruption instead of masking it.
+
+```bash
+shiplog verify            # exit 0 if clean, 1 on any error
+shiplog verify --strict   # also fail on warnings (non-monotonic timestamps)
+shiplog verify --json     # structured findings (line, id, code) for agents/CI
+```
+
+Drop it into CI as a 3-line gate:
+
+```yaml
+- name: Verify ship-log
+  run: pipx run ship-log verify --strict
+```
+
+The `--json` object is stable: `ok` (bool), `checked` (int), `strict` (bool), `errors` /
+`warnings` counts, and `findings` (`[{line, id, code, severity, message}, …]`). Codes are
+greppable: `bad-json`, `not-object`, `missing-field`, `unknown-type`, `duplicate-id`,
+`schema-too-new`, `bad-schema-version`, `dangling-ref`, `non-monotonic-ts`.
+
 ### Export it — durable ADR / CHANGELOG markdown for humans
 
 `brief` is *ephemeral* (token-tuned, for agents). `shiplog export` is *persistent*: it
