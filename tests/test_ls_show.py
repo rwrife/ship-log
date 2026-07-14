@@ -41,8 +41,26 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _seed(repo: Path) -> None:
-    """init + a few entries spanning types/tags/files for filter tests."""
+def _seed(repo: Path, monkeypatch: pytest.MonkeyPatch | None = None) -> None:
+    """init + a few entries spanning types/tags/files for filter tests.
+
+    When ``monkeypatch`` is supplied the entry clock is frozen so all seeded
+    entries share an identical timestamp second. Otherwise ordering across a
+    second boundary is non-deterministic (see test_ls_json_is_array_newest_first).
+    """
+    if monkeypatch is not None:
+        from datetime import UTC, datetime
+
+        from shiplog import models
+
+        frozen = datetime(2026, 6, 21, 12, 0, 0, tzinfo=UTC)
+
+        class _FrozenDT(datetime):
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return frozen if tz is None else frozen.astimezone(tz)
+
+        monkeypatch.setattr(models, "datetime", _FrozenDT)
     assert runner.invoke(app, ["init"]).exit_code == 0
     assert runner.invoke(
         app,
@@ -60,17 +78,22 @@ def _seed(repo: Path) -> None:
 # -- ls: json shape + filters --------------------------------------------
 
 
-def test_ls_json_is_array_newest_first(repo: Path) -> None:
-    _seed(repo)
+def test_ls_json_is_array_newest_first(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Freeze the clock so all three entries share one timestamp second: the
+    # ordering guarantee under test is "ties preserve append order", which is
+    # only exercised when the timestamps actually tie. Relying on wall-clock
+    # ties is flaky on slow runners that straddle a second boundary.
+    _seed(repo, monkeypatch)
     result = runner.invoke(app, ["ls", "--json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert isinstance(data, list)
     assert len(data) == 3
-    # The three seed entries are written in the same second, so their timestamps
-    # tie; newest-first then preserves append order (stable sort), i.e. the
-    # first-added ("use jsonl") leads and the last-added ("doc the cli") trails.
-    # Cross-second ordering is covered in test_filters.py.
+    # Timestamps tie; newest-first then preserves append order (stable sort),
+    # i.e. the first-added ("use jsonl") leads and the last-added ("doc the cli")
+    # trails. Cross-second ordering is covered in test_filters.py.
     assert data[0]["summary"] == "use jsonl"
     assert data[-1]["summary"] == "doc the cli"
     # Stable entry shape (keys present for agents).
