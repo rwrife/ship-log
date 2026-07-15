@@ -76,6 +76,27 @@ shiplog show 260621-K3 --json  # same, machine-readable object
 Filters are AND-combined and case-insensitive; `--json` on `ls`/`show` emits clean,
 ANSI-free output (array for `ls`, object for `show`) so agents parse instead of scrape.
 
+### Watch it — live tail + agent-friendly follow mode
+
+Everything above is *pull*. `shiplog watch` is the *push* half: it tails the log and
+streams new entries as they're appended, so a human (or a supervising agent) sees a
+dead-end the moment another agent logs it — no re-running `ls`.
+
+```bash
+shiplog watch                       # pretty, type-colored stream; follows from now
+shiplog watch --replay              # print the matching backlog first, then follow
+shiplog watch --type deadend        # honour the same --type/--tag/--file filters
+shiplog watch --file store.py --tag storage
+shiplog watch --json                # NDJSON, one entry per line, flushed per entry
+shiplog watch --json | agent-hook   # pipe the stream into a supervising agent
+```
+
+Starts from *now* by default (`--since-now`); `--replay` emits existing matches first.
+It waits patiently if the log doesn't exist yet (start the supervisor before `init`),
+polls every `--interval` seconds (default `0.5`), and exits cleanly on Ctrl-C — no
+traceback. With `--json`, only NDJSON hits stdout (status notes go to stderr) so the
+pipe stays a clean stream.
+
 ### Link it — attach a commit / PR / ref after the fact
 
 You log a decision **at decision-time**, before the commit exists. Later it lands
