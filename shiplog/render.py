@@ -105,6 +105,27 @@ def entries_table(entries: list[Entry], *, title: str | None = None) -> Table:
     return table
 
 
+def watch_line(entry: Entry) -> Text:
+    """A single glanceable line for a streamed entry: ``when  TYPE  id  summary``.
+
+    Tuned for ``watch``'s live tail: compact, type-colored, one entry per line so
+    a fast-moving multi-agent log stays readable. Tags are appended when present
+    (dim/magenta) but never wrap the line off-screen; ``show`` still owns detail.
+    """
+    line = Text()
+    line.append(_short_ts(entry.ts), style="dim")
+    line.append("  ")
+    line.append_text(type_text(entry.type.value))
+    line.append("  ")
+    line.append(entry.id, style="dim")
+    line.append("  ")
+    line.append(entry.summary)
+    if entry.tags:
+        line.append("  ")
+        line.append(_join(entry.tags), style="magenta")
+    return line
+
+
 def entry_panel(entry: Entry, *, links: list[LinkView] | None = None) -> Panel:
     """Build a full-detail panel for a single entry (``show <id>``).
 

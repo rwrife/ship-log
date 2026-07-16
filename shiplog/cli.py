@@ -9,6 +9,7 @@ an agent pastes into context before working.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import typer
@@ -48,12 +49,14 @@ from .render import (
     entries_table,
     entry_panel,
     stats_render,
+    watch_line,
 )
 from .stats import DEFAULT_TOP_N, compute_stats, stats_to_dict
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
 from .tui import run_tui
 from .verify import Severity
 from .verify import verify as run_verify
+from .watch import DEFAULT_INTERVAL, follow
 
 app = typer.Typer(
     name="shiplog",
@@ -501,6 +504,99 @@ def ls(
     count = len(entries)
     title = f"⚓ ship-log — {count} entr{'y' if count == 1 else 'ies'}"
     console.print(entries_table(entries, title=title))
+
+
+@app.command()
+def watch(
+    type_: str = typer.Option(
+        "",
+        "--type",
+        "-t",
+        help="Only stream entries of this type (decision, attempt, deadend, note).",
+    ),
+    tag: str = typer.Option(
+        "",
+        "--tag",
+        help="Only stream entries carrying this tag.",
+    ),
+    file: str = typer.Option(
+        "",
+        "--file",
+        help="Only stream entries referencing this path (suffix match, e.g. cli.py).",
+    ),
+    replay: bool = typer.Option(
+        False,
+        "--replay/--since-now",
+        help="Emit the existing backlog first, then follow (default: start from now).",
+    ),
+    interval: float = typer.Option(
+        DEFAULT_INTERVAL,
+        "--interval",
+        help="Seconds between polls while following.",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit newline-delimited JSON (one entry per line), flushed per entry.",
+    ),
+) -> None:
+    """Follow the log and print new entries as they're appended (Ctrl-C to stop).
+
+    The push half of the read side: where ``ls`` snapshots, ``watch`` streams. In a
+    multi-agent repo, one agent logging a dead-end shows up live for a human or a
+    supervising agent -- no re-running ``ls``. Filters (``--type``/``--tag``/``--file``)
+    are AND-combined and honoured on the stream. ``--json`` emits NDJSON suitable for
+    piping (``shiplog watch --json | agent-hook``). By default the stream starts from
+    *now*; ``--replay`` prints the matching backlog first, then follows. Works even
+    when the log doesn't exist yet -- it waits for the first entry.
+    """
+    if type_.strip():
+        try:
+            type_ = EntryType.coerce(type_).value
+        except ValueError as exc:
+            _fail(str(exc))
+
+    repo_root = _resolve_repo_root()
+    store = Store.for_repo(repo_root)
+    # Unlike other read commands we don't require an existing log: watch waits for
+    # `init`/first `add` to happen, which is a natural "start the supervisor first"
+    # workflow. We only insist we're inside a repo (done above).
+
+    def predicate(entry: Entry) -> bool:
+        # Link records annotate other entries; keep them out of the stream unless
+        # the user explicitly asked for `--type link`, mirroring `ls`.
+        if type_.strip() != EntryType.LINK.value and entry.type == EntryType.LINK:
+            return False
+        kept = filter_entries(
+            [entry],
+            type_=type_,
+            tag=tag,
+            file=file,
+        )
+        return bool(kept)
+
+    if not as_json:
+        rel = store.path.relative_to(repo_root)
+        mode = "replaying backlog, then following" if replay else "following from now"
+        err_console.print(
+            f"[dim]⚓ watching [bold]{rel}[/bold] — {mode}. Ctrl-C to stop.[/dim]"
+        )
+
+    stream = follow(store, predicate=predicate, replay=replay, interval=interval)
+    try:
+        for entry in stream:
+            if as_json:
+                # NDJSON: one compact object per line, flushed so pipes see it now.
+                sys.stdout.write(entry.to_json() + "\n")
+                sys.stdout.flush()
+            else:
+                console.print(watch_line(entry))
+    except KeyboardInterrupt:
+        # Clean exit on SIGINT -- no traceback. Note goes to stderr so a piped
+        # `--json` stdout stays a clean NDJSON stream.
+        if not as_json:
+            err_console.print("[dim]…watch stopped.[/dim]")
+        raise typer.Exit(0) from None
 
 
 @app.command()
