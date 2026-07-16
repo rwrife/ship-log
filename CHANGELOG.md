@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`shiplog why <path>`** — a single-path **rationale rollup**: every decision,
+  dead-end, and note whose `--files` touch a file *or* directory, in one shot.
+  It's `blame` widened from a line to a whole path, and `brief` narrowed to one
+  path — the query an agent runs right before editing a specific file. Matching
+  is **exact → path-suffix → directory-prefix** (`why shiplog` finds everything
+  under `shiplog/`), with `--depth` to cap prefix descent (`--depth 0` disables
+  it). Ranked **dead-ends first**, then decisions newest-first, then the rest,
+  led by a one-line verdict (`2 dead-ends, 3 decisions touching store.py`).
+  Honors `--type`/`--since` (same parser as `ls`/`brief`); `--json` emits a
+  stable object (`path`, `headline`, `deadends`, `decisions`, `hits[]`); a
+  friendly hint (not an error) when nothing touches the path.
+
 - **`shiplog verify`** — a fast, **read-only** integrity & schema linter that
   gives CI a clean exit code so a bad append can't silently ship. Walks every
   line of `.shiplog/log.jsonl` and flags malformed JSON, non-object lines,

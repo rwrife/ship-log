@@ -222,6 +222,29 @@ the line wins, then nearer ranges, then whole-file references, with newest break
 Plain (range-less) entries still match — they just rank below a line-pinned one. If nothing
 touches the file you get a friendly hint, not an error.
 
+### Why a path — rationale rollup for a file or directory
+
+`shiplog why <path>` answers *what do we already know about this file?* in one shot: every
+decision, dead-end, and note whose `--files` touch the path — ranked **dead-ends first**,
+then decisions newest-first, then the rest. It's `blame` widened from a line to a whole
+file/dir, and `brief` narrowed to a single path — the query an agent actually runs right
+before editing a specific file.
+
+```bash
+shiplog why shiplog/store.py        # everything touching store.py, blockers first
+shiplog why store.py                # basename works too (path-suffix match)
+shiplog why shiplog                 # directory rollup: every entry under shiplog/
+shiplog why shiplog --depth 1       # direct children only (skip shiplog/sub/deep.py)
+shiplog why shiplog --depth 0       # exact/suffix only, no directory-prefix matching
+shiplog why store.py --type deadend --since 30d   # same --type/--since filters as ls/brief
+shiplog why shiplog/store.py --json # stable object: {path, headline, deadends, decisions, hits[]}
+```
+
+Matching is **exact → path-suffix → directory-prefix**; a `:line` spec on a logged file
+(`store.py:40-80`) is ignored here since `why` is path-scoped, not line-scoped. Output
+leads with a one-line verdict (e.g. `2 dead-ends, 3 decisions touching store.py`). If
+nothing touches the path you get a friendly hint, not an error.
+
 ### Stats — the whole-log health read
 
 `shiplog stats` zooms all the way out: a compact dashboard of the *entire* log. Where
