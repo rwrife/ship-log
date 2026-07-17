@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`shiplog resolve <id> --why '<how>'`** — close out a dead-end so it stops
+  nagging. Dead-ends are append-only and forever, but some get genuinely fixed;
+  `resolve` appends a linked `resolve` record (reusing the `link_target`
+  machinery, no schema bump) that marks the dead-end **inactive** without
+  mutating it. `brief` drops resolved dead-ends, `guard` stops blocking on them,
+  and `ls`/`ask` gain `--unresolved` to filter them out — while full history is
+  preserved (`show <id>` reveals the resolution) and `--include-resolved`
+  (on `brief`/`guard`/`ls`) re-surfaces them. Only dead-ends can be resolved, and
+  only once; `verify` validates the linkage like any other reference.
+
 - **`shiplog why <path>`** — a single-path **rationale rollup**: every decision,
   dead-end, and note whose `--files` touch a file *or* directory, in one shot.
   It's `blame` widened from a line to a whole path, and `brief` narrowed to one
