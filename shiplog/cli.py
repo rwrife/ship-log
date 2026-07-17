@@ -52,6 +52,12 @@ from .render import (
     watch_line,
     why_render,
 )
+from .resolutions import (
+    is_resolution,
+    make_resolution_summary,
+    resolution_for,
+    resolved_ids,
+)
 from .stats import DEFAULT_TOP_N, compute_stats, stats_to_dict
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
 from .tui import run_tui
@@ -421,6 +427,79 @@ def link(
     )
 
 
+@app.command()
+def resolve(
+    entry_id: str = typer.Argument(
+        ...,
+        metavar="ID",
+        help="Id (full or unique prefix) of the dead-end to resolve.",
+    ),
+    why: str = typer.Option(
+        "",
+        "--why",
+        "-w",
+        help="How the dead-end was resolved (the whole point).",
+    ),
+) -> None:
+    """Close out a dead-end so it stops nagging — append-only.
+
+    Dead-ends are forever, but sometimes one gets genuinely fixed ('the global
+    cache was a dead-end… until we added invalidation'). ``resolve`` appends a
+    tiny ``resolve`` record that points back at ``ID`` (the original dead-end line
+    is never mutated). A resolved dead-end is treated as **inactive**: ``brief``
+    drops it, ``guard`` stops blocking on it, and ``ls``/``ask`` can filter it out
+    with ``--unresolved`` (or re-surface it with ``--include-resolved``). Full
+    history is preserved -- ``shiplog show <ID>`` shows the resolution.
+    """
+    store = _open_store_for_read()
+    entries = store.read_all()
+    try:
+        target = _find_by_id(entries, entry_id)
+    except LookupError as exc:
+        _fail(str(exc))
+    if target is None:
+        _fail(
+            f"no entry with id {entry_id!r} to resolve. "
+            "Try [bold]shiplog ls --type deadend[/bold] to find one."
+        )
+    if target.type != EntryType.DEADEND:
+        _fail(
+            f"{target.id} is a [bold]{target.type.value}[/bold], not a dead-end. "
+            "Only dead-ends can be resolved."
+        )
+    if target.id in resolved_ids(entries):
+        _fail(
+            f"{target.id} is already resolved. "
+            "See [bold]shiplog show " + target.id + "[/bold] for how."
+        )
+
+    ctx = GitContext.capture()
+    config = Config.load(ctx.repo_root) if ctx.repo_root is not None else None
+    author = (config.author if config else "") or ctx.author
+
+    resolution = Entry(
+        summary=make_resolution_summary(target),
+        type=EntryType.RESOLVE,
+        author=author,
+        branch=ctx.branch,
+        sha=ctx.sha,
+        why=why.strip(),
+        link_target=target.id,
+    )
+    store.append(resolution)
+
+    console.print(
+        f"\u2693 resolved dead-end [dim]{target.id}[/dim] — "
+        "it will no longer nag in brief / guard."
+    )
+    if why.strip():
+        console.print(f"  how: {why.strip()}", style="dim")
+    console.print(
+        "  re-surface it anywhere with [bold]--include-resolved[/bold].",
+        style="dim",
+    )
+
+
 @app.command(name="ls")
 def ls(
     type_: str = typer.Option(
@@ -450,6 +529,16 @@ def ls(
         "-n",
         help="Show at most N entries (0 = no limit).",
     ),
+    unresolved: bool = typer.Option(
+        False,
+        "--unresolved",
+        help="Only dead-ends that have NOT been resolved (hides resolved ones).",
+    ),
+    include_resolved: bool = typer.Option(
+        False,
+        "--include-resolved",
+        help="Include resolution records themselves as rows (default: hidden).",
+    ),
     as_json: bool = typer.Option(
         False,
         "--json",
@@ -477,13 +566,16 @@ def ls(
 
     store = _open_store_for_read()
     all_entries = store.read_all()
-    # Link records annotate other entries (surfaced in `show`), so they don't
-    # clutter the main table as standalone rows -- unless explicitly asked for
-    # via `--type link`.
-    if type_.strip() == EntryType.LINK.value:
+    resolved = resolved_ids(all_entries)
+    # Link/resolution records annotate other entries (surfaced in `show`), so they
+    # don't clutter the main table as standalone rows -- unless explicitly asked
+    # for via `--type link` / `--type resolve` (or `--include-resolved`).
+    keep_type = type_.strip()
+    if keep_type in (EntryType.LINK.value, EntryType.RESOLVE.value) or include_resolved:
         source = all_entries
     else:
-        source, _links = split_links(all_entries)
+        primary, _links = split_links(all_entries)
+        source = [e for e in primary if not is_resolution(e)]
     entries = filter_entries(
         source,
         type_=type_,
@@ -491,6 +583,12 @@ def ls(
         file=file,
         since=since_dt,
     )
+    if unresolved:
+        entries = [
+            e
+            for e in entries
+            if not (e.type == EntryType.DEADEND and e.id in resolved)
+        ]
     entries = sort_newest_first(entries)
     if limit and limit > 0:
         entries = entries[:limit]
@@ -629,14 +727,16 @@ def show(
     # Aggregate any links pointing back at this entry (newest-first).
     _primary, link_records = split_links(entries)
     resolved_links = links_for(entry.id, link_records)
+    resolution = resolution_for(entry.id, entries)
 
     if as_json:
         payload = entry.to_dict()
         payload["links"] = [lv.to_dict() for lv in resolved_links]
+        payload["resolution"] = resolution.to_dict() if resolution else None
         console.print_json(json.dumps(payload, ensure_ascii=False))
         return
 
-    console.print(entry_panel(entry, links=resolved_links))
+    console.print(entry_panel(entry, links=resolved_links, resolution=resolution))
 
 
 @app.command()
@@ -651,6 +751,11 @@ def brief(
         "--limit",
         "-n",
         help=f"Max entries in the digest (default {DEFAULT_BUDGET}; 0 = no cap).",
+    ),
+    include_resolved: bool = typer.Option(
+        False,
+        "--include-resolved",
+        help="Keep resolved dead-ends in the digest (default drops them).",
     ),
     as_json: bool = typer.Option(
         False,
@@ -682,7 +787,12 @@ def brief(
             if not f.rstrip("/").startswith(SHIPLOG_DIR)
         ]
 
-    digest = build_brief(store.read_all(), focus=focus, budget=limit)
+    digest = build_brief(
+        store.read_all(),
+        focus=focus,
+        budget=limit,
+        include_resolved=include_resolved,
+    )
 
     if as_json:
         console.print_json(json.dumps(brief_to_dict(digest), ensure_ascii=False))
@@ -725,6 +835,11 @@ def ask(
         "-n",
         help=f"Max matches to return (default {DEFAULT_ASK_LIMIT}; 0 = no cap).",
     ),
+    unresolved: bool = typer.Option(
+        False,
+        "--unresolved",
+        help="Exclude resolved dead-ends from the search corpus.",
+    ),
     as_json: bool = typer.Option(
         False,
         "--json",
@@ -753,7 +868,17 @@ def ask(
             _fail(str(exc))
 
     store = _open_store_for_read()
-    source, _links = split_links(store.read_all())
+    all_entries = store.read_all()
+    source, _links = split_links(all_entries)
+    # Resolution records are annotations, not searchable prose -- drop them.
+    source = [e for e in source if not is_resolution(e)]
+    if unresolved:
+        resolved = resolved_ids(all_entries)
+        source = [
+            e
+            for e in source
+            if not (e.type == EntryType.DEADEND and e.id in resolved)
+        ]
     entries = filter_entries(
         source,
         type_=type_,
@@ -1535,6 +1660,11 @@ def guard_main(
         "--json",
         help="With no subcommand: emit the blocking dead-ends as JSON (for agents).",
     ),
+    include_resolved: bool = typer.Option(
+        False,
+        "--include-resolved",
+        help="With no subcommand: also report resolved dead-ends that would block.",
+    ),
 ) -> None:
     """Manage / run the enforcing dead-end guard.
 
@@ -1558,7 +1688,9 @@ def guard_main(
         _fail('no ship-log here yet. Run [bold]shiplog init[/bold] first.')
     entries = store.read_all()
     touched = set(guard_hook.staged_files(repo_root))
-    blocks = guard_hook.blocking_deadends(entries, touched)
+    blocks = guard_hook.blocking_deadends(
+        entries, touched, include_resolved=include_resolved
+    )
 
     if as_json:
         payload = {"blocking": [b.to_dict() for b in blocks], "count": len(blocks)}

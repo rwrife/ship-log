@@ -431,6 +431,28 @@ clobbers a pre-existing `pre-commit` hook (use `--force` to append the guard blo
 yours); uninstall strips only ship-log's block. A missing `shiplog` on `PATH` or any
 internal error degrades to *allow* — the guard can never wedge a repo.
 
+### Resolve a dead-end — close it out so it stops nagging
+
+Dead-ends are append-only and forever — but sometimes one gets *genuinely fixed*
+("the global cache was a dead-end… until we added invalidation"). `shiplog resolve`
+marks a dead-end **inactive** without mutating it: it appends a tiny `resolve` record
+pointing back at the dead-end (same append-only machinery as `link`/`ack`), and
+`brief`, `guard`, and `ask` stop surfacing it as an active tripwire.
+
+```console
+shiplog resolve 260621-K3F9Q2 --why "added cache invalidation in store.py"
+```
+
+- **`brief`** drops resolved dead-ends from the digest; **`guard`** stops blocking on
+  them; **`ls --unresolved` / `ask --unresolved`** filter them out of results.
+- Full history is preserved: `shiplog show <id>` shows the resolution (how + when),
+  and **`--include-resolved`** (on `brief`/`guard`/`ls`) re-surfaces it any time.
+- Only dead-ends can be resolved, and only once. `verify` validates the linkage like
+  any other reference.
+
+Think of it as the opposite of `--ack`: an *ack* says "I know, let me through this
+once-per-id"; a *resolve* says "this graveyard got paved over — stop warning anyone."
+
 ### Conflict-free merges (union merge driver)
 
 ship-log's whole premise is *many branches* (one per agent) each appending to

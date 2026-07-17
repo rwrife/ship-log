@@ -37,6 +37,7 @@ from pathlib import Path
 from .gitctx import _run_git
 from .hooks import HookPaths as _NudgeHookPaths
 from .models import Entry, EntryType
+from .resolutions import resolved_ids
 
 HOOK_NAME = "pre-commit"
 
@@ -146,19 +147,28 @@ def acknowledged_ids(entries: list[Entry]) -> set[str]:
     }
 
 
-def blocking_deadends(entries: list[Entry], touched: set[str]) -> list[Block]:
+def blocking_deadends(
+    entries: list[Entry],
+    touched: set[str],
+    *,
+    include_resolved: bool = False,
+) -> list[Block]:
     """Compute the dead-ends that should block a commit touching ``touched``.
 
     A dead-end blocks when it (a) has at least one recorded file, (b) overlaps a
-    staged path, and (c) has **not** been acknowledged. Results are newest-first
-    (most recent dead-end shown first) for a stable, useful ordering.
+    staged path, (c) has **not** been acknowledged, and (d) has **not** been
+    resolved (unless ``include_resolved`` re-surfaces resolved ones). Results are
+    newest-first (most recent dead-end shown first) for a stable ordering.
     """
     acked = acknowledged_ids(entries)
+    resolved = set() if include_resolved else resolved_ids(entries)
     blocks: list[Block] = []
     for e in entries:
         if e.type != EntryType.DEADEND:
             continue
         if e.id in acked:
+            continue
+        if e.id in resolved:
             continue
         overlap = paths_overlap(e.files, touched)
         if overlap:
