@@ -50,6 +50,7 @@ from .render import (
     entry_panel,
     stats_render,
     watch_line,
+    why_render,
 )
 from .stats import DEFAULT_TOP_N, compute_stats, stats_to_dict
 from .store import LOG_FILENAME, SHIPLOG_DIR, Store
@@ -57,6 +58,8 @@ from .tui import run_tui
 from .verify import Severity
 from .verify import verify as run_verify
 from .watch import DEFAULT_INTERVAL, follow
+from .why import why as run_why
+from .why import why_to_dict
 
 app = typer.Typer(
     name="shiplog",
@@ -1176,6 +1179,89 @@ def blame(
         return
 
     console.print(blame_render(result))
+
+
+@app.command()
+def why(
+    path: str = typer.Argument(
+        ...,
+        metavar="PATH",
+        help="File or directory to roll up, e.g. shiplog/store.py or shiplog/.",
+    ),
+    type_: str | None = typer.Option(
+        None,
+        "--type",
+        "-t",
+        help="Only include this entry type (decision/deadend/attempt/note/...).",
+    ),
+    since: str | None = typer.Option(
+        None,
+        "--since",
+        help="Only entries at/after this time (relative like 7d/24h or ISO date).",
+    ),
+    depth: int | None = typer.Option(
+        None,
+        "--depth",
+        help="Cap directory-prefix matching N levels deep (0 = exact/suffix only).",
+    ),
+    limit: int = typer.Option(
+        0,
+        "--limit",
+        "-n",
+        help="Max matches to show (0 = no cap).",
+    ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a JSON object instead of panels (for agents/pipes).",
+    ),
+) -> None:
+    """Roll up everything the log knows about one PATH -- blame widened to a whole file/dir.
+
+    Gathers every entry whose ``--files`` touch PATH (exact, path-suffix, or under
+    it as a directory prefix) and ranks them blockers-first: **dead-ends**, then
+    **decisions** newest-first, then the rest. It's the query an agent runs right
+    before editing a specific path -- ``blame`` without needing a line number,
+    ``brief`` narrowed to one path. ``--json`` emits a stable object with a
+    one-line ``headline`` verdict.
+    """
+    if depth is not None and depth < 0:
+        _fail("--depth must be >= 0 (0 disables directory-prefix matching).")
+
+    since_dt = None
+    if since is not None:
+        try:
+            since_dt = parse_since(since)
+        except ValueError as exc:
+            _fail(str(exc))
+
+    if type_ is not None:
+        try:
+            EntryType.coerce(type_)
+        except ValueError as exc:
+            _fail(str(exc))
+
+    store = _open_store_for_read()
+    entries = store.read_all()
+    # Honor --type/--since up front so ranking only sees eligible entries.
+    entries = filter_entries(entries, type_=type_, since=since_dt)
+
+    result = run_why(entries, path, depth=depth, limit=limit)
+
+    if as_json:
+        console.print_json(json.dumps(why_to_dict(result), ensure_ascii=False))
+        return
+
+    if not result.hits:
+        console.print(
+            empty_note(
+                f"no log entries touch {path}. "
+                f'Log one: shiplog add decision "..." --files {path}.'
+            )
+        )
+        return
+
+    console.print(why_render(result))
 
 
 @app.command()

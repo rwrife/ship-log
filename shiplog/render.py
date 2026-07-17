@@ -22,6 +22,7 @@ from .brief import Brief
 from .links import LinkView
 from .models import Entry, EntryType
 from .stats import Stats
+from .why import WhyHit, WhyResult
 
 # One accent color per type — dead-ends shout, notes whisper.
 _TYPE_STYLE: dict[str, str] = {
@@ -244,6 +245,58 @@ def blame_render(result: BlameResult) -> Group:
             Text(f"{len(alts)} more match{'' if len(alts) == 1 else 'es'}:", style="dim")
         )
         renderables.extend(_blame_hit_panel(h, line, headline=False) for h in alts)
+    return Group(*renderables)
+
+
+# -- why (single-path rationale rollup) ----------------------------------
+
+_WHY_MATCH_LABEL: dict[str, str] = {
+    "exact": "exact path",
+    "suffix": "path suffix",
+    "prefix": "under directory",
+}
+
+
+def _why_hit_panel(hit: WhyHit) -> Panel:
+    """Render one ``why`` hit as a panel, colored + bordered by entry type."""
+    e = hit.entry
+    body = Table.grid(padding=(0, 1))
+    body.add_column(justify="right", style="bold")
+    body.add_column(overflow="fold")
+
+    body.add_row("type:", type_text(e.type.value))
+    body.add_row("summary:", Text(e.summary))
+    if e.why:
+        body.add_row("why:", Text(e.why))
+    if e.files:
+        body.add_row("files:", Text(", ".join(e.files), style="dim"))
+    body.add_row("match:", Text(_WHY_MATCH_LABEL.get(hit.match_kind, hit.match_kind), style="dim"))
+    meta = e.branch or "(no branch)"
+    if e.sha:
+        meta += f" @ {e.sha}"
+    body.add_row("when:", Text(f"{_short_ts(e.ts)}  {meta}", style="dim"))
+
+    return Panel(
+        body,
+        title=f"{e.type.value} \u00b7 {e.id}",
+        title_align="left",
+        border_style=_TYPE_STYLE.get(e.type.value, "white"),
+        expand=False,
+    )
+
+
+def why_render(result: WhyResult) -> Group:
+    """Render a :class:`~shiplog.why.WhyResult`: headline verdict + ranked panels.
+
+    The caller handles the empty case (no hits) with a friendly note; this assumes
+    at least one hit and leads with the one-line verdict, then dead-ends, then
+    decisions, then the rest.
+    """
+    renderables: list[object] = [
+        Text(f"why {result.path}", style="bold"),
+        Text(result.headline, style="cyan"),
+    ]
+    renderables.extend(_why_hit_panel(h) for h in result.hits)
     return Group(*renderables)
 
 
