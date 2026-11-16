@@ -21,6 +21,7 @@ from .blame import BlameHit, BlameResult
 from .brief import Brief
 from .links import LinkView
 from .models import Entry, EntryType
+from .resolutions import ResolutionView
 from .stats import Stats
 from .why import WhyHit, WhyResult
 
@@ -127,11 +128,18 @@ def watch_line(entry: Entry) -> Text:
     return line
 
 
-def entry_panel(entry: Entry, *, links: list[LinkView] | None = None) -> Panel:
+def entry_panel(
+    entry: Entry,
+    *,
+    links: list[LinkView] | None = None,
+    resolution: ResolutionView | None = None,
+) -> Panel:
     """Build a full-detail panel for a single entry (``show <id>``).
 
     When ``links`` are supplied (follow-up ``link`` records pointing at this
-    entry), a **Links** section is appended below the fields, newest-first.
+    entry), a **Links** section is appended below the fields, newest-first. When
+    ``resolution`` is supplied (this dead-end was resolved), a **Resolved**
+    section is appended noting how.
     """
     body = Table.grid(padding=(0, 1))
     body.add_column(justify="right", style="bold")
@@ -158,13 +166,25 @@ def entry_panel(entry: Entry, *, links: list[LinkView] | None = None) -> Panel:
         row("ref", entry.ref)
 
     content: object = body
+    sections: list[object] = []
+    if resolution:
+        res_line = Text("resolved", style="bold green")
+        if resolution.how:
+            res_line = Text.assemble(
+                Text("resolved", style="bold green"),
+                Text(f" — {resolution.how}"),
+            )
+        sections.extend([Text(""), res_line])
     if links:
-        content = Group(
-            body,
-            Text(""),
-            Text(f"Links ({len(links)})", style="bold blue"),
-            _links_grid(links),
+        sections.extend(
+            [
+                Text(""),
+                Text(f"Links ({len(links)})", style="bold blue"),
+                _links_grid(links),
+            ]
         )
+    if sections:
+        content = Group(body, *sections)
 
     return Panel(
         content,

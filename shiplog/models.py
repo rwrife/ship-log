@@ -39,6 +39,7 @@ class EntryType(StrEnum):
     NOTE = "note"
     LINK = "link"
     ACK = "ack"
+    RESOLVE = "resolve"
 
     @classmethod
     def coerce(cls, value: EntryType | str) -> EntryType:

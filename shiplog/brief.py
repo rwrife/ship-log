@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from .filters import _file_matches
 from .links import is_link
 from .models import Entry, EntryType
+from .resolutions import is_resolution, resolved_ids
 
 # How many entries the digest includes by default. ``ls`` is unbounded; ``brief``
 # is deliberately small so it drops straight into a prompt. Each entry renders to
@@ -115,6 +116,7 @@ def build_brief(
     *,
     focus: list[str] | None = None,
     budget: int = DEFAULT_BUDGET,
+    include_resolved: bool = False,
 ) -> Brief:
     """Rank, then budget, ``entries`` into a :class:`Brief`.
 
@@ -124,14 +126,27 @@ def build_brief(
             or empty means rank by type + recency only.
         budget: Max entries to include. ``<= 0`` means "no cap" (include all,
             still ranked) -- handy for ``--limit 0`` power users.
+        include_resolved: When True, resolved dead-ends are kept in the digest
+            (default drops them -- a resolved dead-end is no longer a tripwire).
 
     Returns:
         A :class:`Brief` with ranked, truncated entries and digest metadata.
     """
     focus = [f for f in (focus or []) if f.strip()]
-    # Link records annotate other entries (they surface in `show`), so they never
-    # appear as standalone bullets in the digest.
-    entries = [e for e in entries if not is_link(e)]
+    # Compute resolved dead-end ids from the *full* list before we strip the
+    # resolution records themselves.
+    resolved = set() if include_resolved else resolved_ids(entries)
+    # Link/resolution records annotate other entries (they surface in `show`), so
+    # they never appear as standalone bullets in the digest.
+    entries = [e for e in entries if not is_link(e) and not is_resolution(e)]
+    # A resolved dead-end has been paved over -- drop it from the tripwire digest
+    # unless the caller explicitly wants the full history back.
+    if resolved:
+        entries = [
+            e
+            for e in entries
+            if not (e.type == EntryType.DEADEND and e.id in resolved)
+        ]
     ranked = rank_entries(entries, focus)
     total = len(ranked)
     selected = ranked if budget <= 0 else ranked[:budget]
